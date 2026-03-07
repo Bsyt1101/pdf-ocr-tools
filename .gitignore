@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# 配置文件
+config.ini
+.env
+
+# Claude Code 项目指南（本地使用）
+CLAUDE.md
+
+# 日志文件
+*.log
+
+# 输出文件
+output/
+temp_split/
+ocr_images/
+extracted_text/
+
+# 测试文件
+test_output/
+*.pdf
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 临时文件
+*.tmp
+*.bak
