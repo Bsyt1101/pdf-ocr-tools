@@ -100,6 +100,10 @@ class DocumentClassifier:
         ([("入场", "离场")], "入场离场确认单", False),
 
         # 系统级文档（包含"xxx系统-"前缀）
+        # 注意：报告评审记录必须放在测评结果记录之前，避免"测评报告评审记录"被误识别为"测评结果记录"
+        ([("报告", "复审")], "xxx系统-报告复审记录", True),
+        ([("报告", "初审")], "xxx系统-报告初审记录", True),
+        ([("报告", "评审")], "xxx系统-报告初审记录", True),  # "测评报告评审记录"也归类为初审记录
         (["情况调查表"], "xxx系统-情况调查表确认签字", True),
         ([("测评方案", "初审")], "xxx系统-测评方案初审记录", True),
         ([("测评方案", "评审")], "xxx系统-测评方案复审记录", True),
@@ -109,8 +113,6 @@ class DocumentClassifier:
         (["问题列表"], "xxx系统-测评问题列表签字页", True),
         (["漏洞扫描"], "xxx系统-漏洞扫描记录签字确认表", True),
         (["渗透测试"], "xxx系统-渗透测试记录签字确认表", True),
-        ([("报告", "复审")], "xxx系统-报告复审记录", True),
-        ([("报告", "初审")], "xxx系统-报告初审记录", True),
     ]
 
     # 系统级文档类型（用于判断是否需要系统编号）
@@ -125,6 +127,21 @@ class DocumentClassifier:
         "xxx系统-渗透测试记录签字确认表",
         "xxx系统-报告复审记录",
         "xxx系统-报告初审记录",
+    }
+
+    # 系统级文档降级为项目级命名的映射（当无法从文件编号获取系统信息时使用）
+    # 降级后的命名统一使用目标文件夹名称
+    SYSTEM_TO_PROJECT_LEVEL = {
+        "xxx系统-情况调查表确认签字": "测评调研表",
+        "xxx系统-测评方案初审记录": "测评方案评审记录",
+        "xxx系统-测评方案复审记录": "测评方案评审记录",
+        "xxx系统-测评方案确认书": "测评方案确认书",
+        "xxx系统-测评结果记录签字页": "测评记录及问题汇总",
+        "xxx系统-测评问题列表签字页": "测评记录及问题汇总",
+        "xxx系统-漏洞扫描记录签字确认表": "漏洞扫描报告",
+        "xxx系统-渗透测试记录签字确认表": "渗透测试报告",
+        "xxx系统-报告复审记录": "报告评审记录",
+        "xxx系统-报告初审记录": "报告评审记录",
     }
 
     def extract_file_code(self, text: str) -> Optional[Dict[str, str]]:
@@ -186,11 +203,12 @@ class DocumentClassifier:
                 project_code = 'JDB' + digits
                 print(f"    [OCR 修正] {original_code} -> {project_code}")
 
-            # 特殊处理：如果是 XXXX 占位符，通过内容推断类型
-            if doc_type_code == "XXXX":
-                print(f"    检测到占位符编号 XXXX，尝试通过内容推断类型...")
+            # 检查类型代码是否在映射表中
+            if doc_type_code not in self.DOC_TYPE_CODE_MAP:
+                print(f"    类型代码 '{doc_type_code}' 不在映射表中，尝试通过内容推断类型...")
 
                 # 通过关键词匹配推断文档类型
+                # 注意：报告评审记录必须放在测评结果记录之前，避免"测评报告评审记录"被误识别为"测评结果记录"
                 inferred_type = None
                 if "情况调查表" in text:
                     inferred_type = "DCB"
@@ -200,6 +218,10 @@ class DocumentClassifier:
                     inferred_type = "FAFS"
                 elif "测评方案" in text and "确认" in text:
                     inferred_type = "FAQR"
+                elif "报告" in text and "复审" in text:
+                    inferred_type = "BGFS"
+                elif "报告" in text and ("初审" in text or "评审" in text):
+                    inferred_type = "BGCS"
                 elif "测评结果" in text and "记录" in text:
                     inferred_type = "CPJG"
                 elif "问题列表" in text:
@@ -208,10 +230,6 @@ class DocumentClassifier:
                     inferred_type = "SMQR"
                 elif "渗透测试" in text:
                     inferred_type = "CTCS"
-                elif "报告" in text and "复审" in text:
-                    inferred_type = "BGFS"
-                elif "报告" in text and "初审" in text:
-                    inferred_type = "BGCS"
 
                 if inferred_type:
                     print(f"    推断类型代码: {inferred_type}")
@@ -260,6 +278,7 @@ class DocumentClassifier:
             return doc_type, is_system_level
 
         # 如果没有文件编号，使用关键词匹配
+        # 注意：此时匹配到系统级文档应降级为项目级命名（因为没有明确的系统序号）
         for keywords, doc_type, is_system_level in self.CLASSIFICATION_RULES:
             # 检查所有关键词是否都在文本中
             # keywords 可能是列表或包含元组的列表
@@ -272,6 +291,10 @@ class DocumentClassifier:
                 match = all(keyword in text for keyword in keywords)
 
             if match:
+                # 如果匹配到系统级文档，降级为项目级命名
+                if is_system_level and doc_type in self.SYSTEM_TO_PROJECT_LEVEL:
+                    project_level_name = self.SYSTEM_TO_PROJECT_LEVEL[doc_type]
+                    return project_level_name, False  # 返回项目级命名，is_system_level=False
                 return doc_type, is_system_level
 
         return None, False
