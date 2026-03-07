@@ -563,15 +563,22 @@ class PDFProcessor:
             print("警告：未安装 python-docx，无法读取系统名称")
             return {}
 
-        # 搜索"项目实施单"文件夹
+        # 搜索"项目实施单"文件夹（先在当前目录，再在父目录）
         impl_folder = None
-        for item in pdf_dir.iterdir():
-            if item.is_dir() and "项目实施单" in item.name:
-                impl_folder = item
+        search_dirs = [pdf_dir, pdf_dir.parent]  # 当前目录和父目录
+
+        for search_dir in search_dirs:
+            if not search_dir.exists():
+                continue
+            for item in search_dir.iterdir():
+                if item.is_dir() and "项目实施单" in item.name:
+                    impl_folder = item
+                    break
+            if impl_folder:
                 break
 
         if not impl_folder:
-            print(f"警告：未找到包含'项目实施单'的文件夹")
+            print(f"警告：未找到包含'项目实施单'的文件夹（已搜索当前目录和父目录）")
             return {}
 
         print(f"找到项目实施单文件夹: {impl_folder.name}")
@@ -960,6 +967,9 @@ class PDFProcessor:
 
                 # 确定使用的系统名称
                 current_system_name = system_name
+                system_name_source = None  # 记录系统名称来源：'file_code', 'fuzzy_match', 'content_extract'
+                file_code_system_seq = None  # 记录文件编号中的系统序号
+
                 if is_system_level and not system_name:
                     # 方式1：从文件编号 + Word映射表获取系统名称
                     if system_names_map:
@@ -968,30 +978,59 @@ class PDFProcessor:
                         if file_code:
                             try:
                                 system_seq = int(file_code['system_code'])
+                                file_code_system_seq = system_seq  # 保存文件编号中的系统序号
                                 print(f"  系统序号: {system_seq}")
                                 print(f"  系统名称映射: {system_names_map}")
                                 if system_seq in system_names_map:
                                     current_system_name = system_names_map[system_seq]
+                                    system_name_source = 'file_code'
                                     print(f"  ✓ 使用系统名称: {current_system_name} (序号 {system_seq})")
                                 else:
                                     print(f"  ✗ 未找到序号 {system_seq} 对应的系统名称")
                             except (ValueError, KeyError) as e:
                                 print(f"  ✗ 转换失败: {e}")
 
-                    # 方式2：从 Word 系统名称列表中匹配 OCR 文本
+                    # 方式2：从 Word 系统名称列表中匹配 OCR 文本（模糊匹配）
                     if not current_system_name and system_names_map:
+                        matched_seq = None
                         for seq, name in system_names_map.items():
-                            if name in text:
+                            # 去掉常见后缀进行模糊匹配
+                            name_core = name.replace('系统', '').replace('平台', '').strip()
+                            if name in text or name_core in text:
                                 current_system_name = name
-                                print(f"  ✓ 从文本匹配系统名称: {current_system_name}")
+                                matched_seq = seq
+                                system_name_source = 'fuzzy_match'
+                                print(f"  ✓ 从文本匹配系统名称: {current_system_name} (模糊匹配，序号 {seq})")
                                 break
+
+                        # 验证：如果有文件编号，检查匹配的系统序号是否一致
+                        if current_system_name and file_code_system_seq is not None and matched_seq != file_code_system_seq:
+                            print(f"  ⚠️  警告：系统名称不一致！")
+                            print(f"      - 文件编号中的系统序号: {file_code_system_seq}")
+                            print(f"      - 匹配到的系统名称: {current_system_name} (序号 {matched_seq})")
+                            print(f"      - 建议检查文件编号或系统名称是否正确")
 
                     # 方式3：从 OCR 文本内容提取系统名称
                     if not current_system_name:
                         extracted_name = self.classifier.extract_system_name_from_content(text)
                         if extracted_name:
                             current_system_name = extracted_name
+                            system_name_source = 'content_extract'
                             print(f"  ✓ 从内容提取系统名称: {current_system_name}")
+
+                            # 验证：如果有文件编号和Word映射表，检查提取的系统名称是否与文件编号一致
+                            if file_code_system_seq is not None and system_names_map:
+                                expected_name = system_names_map.get(file_code_system_seq)
+                                if expected_name and expected_name != current_system_name:
+                                    # 检查是否是同一个系统（去掉"系统"/"平台"后缀比较）
+                                    extracted_core = current_system_name.replace('系统', '').replace('平台', '').strip()
+                                    expected_core = expected_name.replace('系统', '').replace('平台', '').strip()
+                                    if extracted_core not in expected_core and expected_core not in extracted_core:
+                                        print(f"  ⚠️  警告：系统名称不一致！")
+                                        print(f"      - 文件编号中的系统序号: {file_code_system_seq}")
+                                        print(f"      - 实施单中对应的系统名称: {expected_name}")
+                                        print(f"      - 页面提取的系统名称: {current_system_name}")
+                                        print(f"      - 建议检查文件编号或页面内容是否正确")
                         else:
                             print(f"  ✗ 未能提取系统名称")
 

@@ -1,7 +1,7 @@
 # PDF文档自动拆分和归档工具 - 文档索引
 
-**当前版本**: v1.5.0
-**更新日期**: 2026-03-05
+**当前版本**: v1.6.2
+**更新日期**: 2026-03-07
 
 ---
 
@@ -41,10 +41,15 @@
   - 故障排查
 
 #### 系统名称管理
-- **[SYSTEM_NAMES.md](SYSTEM_NAMES.md)** - 系统名称自动读取 ⭐ v1.3.0
+- **[SYSTEM_NAMES.md](docs/guides/SYSTEM_NAMES.md)** - 系统名称自动读取 ⭐ v1.3.0
   - 从Word文件自动读取系统名称
   - 文件结构要求
   - 工作流程说明
+
+- **[SYSTEM_NAME_VALIDATION.md](docs/guides/SYSTEM_NAME_VALIDATION.md)** - 系统名称一致性验证 ⭐ v1.6.2
+  - 自动检测文件编号与系统名称的一致性
+  - 验证逻辑和使用示例
+  - 处理建议
 
 #### 页面合并
 - **[PAGE_MERGE.md](PAGE_MERGE.md)** - 智能页面合并 ⭐ v1.4.0
@@ -141,7 +146,10 @@
 → 阅读 [FOLDER_MAPPING.md](FOLDER_MAPPING.md) ⭐ 重要
 
 ### 我想了解系统名称自动读取功能
-→ 阅读 [SYSTEM_NAMES.md](SYSTEM_NAMES.md)
+→ 阅读 [SYSTEM_NAMES.md](docs/guides/SYSTEM_NAMES.md)
+
+### 我想了解系统名称一致性验证功能
+→ 阅读 [SYSTEM_NAME_VALIDATION.md](docs/guides/SYSTEM_NAME_VALIDATION.md)
 
 ### 我想了解页面合并功能
 → 阅读 [PAGE_MERGE.md](PAGE_MERGE.md)
@@ -165,13 +173,14 @@
 
 | 功能 | 版本 | 文档 |
 |------|------|------|
-| 18种文档类型识别 | v1.2.0 | [DOC_TYPES.md](DOC_TYPES.md) |
-| 文件编号识别 | v1.1.0 | [NAMING_RULES.md](NAMING_RULES.md) |
-| 智能文件夹搜索 | v1.3.0 | [FOLDER_SEARCH.md](FOLDER_SEARCH.md) |
-| 系统名称自动读取 | v1.3.0 | [SYSTEM_NAMES.md](SYSTEM_NAMES.md) |
+| 18种文档类型识别 | v1.2.0 | [DOC_TYPES.md](docs/guides/DOC_TYPES.md) |
+| 文件编号识别 | v1.1.0 | [NAMING_RULES.md](docs/guides/NAMING_RULES.md) |
+| 智能文件夹搜索 | v1.3.0 | [FOLDER_SEARCH.md](docs/guides/FOLDER_SEARCH.md) |
+| 系统名称自动读取 | v1.3.0 | [SYSTEM_NAMES.md](docs/guides/SYSTEM_NAMES.md) |
 | 智能页面合并 | v1.4.0 | [PAGE_MERGE.md](PAGE_MERGE.md) |
-| 文件夹映射 | v1.3.1 | [FOLDER_MAPPING.md](FOLDER_MAPPING.md) |
-| 多OCR引擎支持 | v1.5.0 | [OCR_ENGINES.md](OCR_ENGINES.md) |
+| 文件夹映射 | v1.3.1 | [FOLDER_MAPPING.md](docs/guides/FOLDER_MAPPING.md) |
+| 多OCR引擎支持 | v1.5.0 | [OCR_ENGINES.md](docs/guides/OCR_ENGINES.md) |
+| 系统名称一致性验证 | v1.6.2 | [SYSTEM_NAME_VALIDATION.md](docs/guides/SYSTEM_NAME_VALIDATION.md) |
 
 ---
 
@@ -239,6 +248,6 @@
 
 ---
 
-**版本**: v1.4.0
-**更新日期**: 2026-03-04
+**版本**: v1.6.2
+**更新日期**: 2026-03-07
 **开发单位**: 广东中科实数科技有限公司
