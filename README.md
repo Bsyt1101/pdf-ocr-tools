@@ -42,7 +42,7 @@
 
 ```bash
 # 进入项目目录
-cd pdf-ocr-tool
+cd pdf-ocr-tools
 
 # 创建虚拟环境（推荐）
 python3 -m venv venv
@@ -440,7 +440,7 @@ python doc_classifier.py
 ## 📝 文件说明
 
 ```
-pdf-ocr-tool/
+pdf-ocr-tools/
 ├── pdf_processor.py      # 主程序
 ├── doc_classifier.py     # 文档分类器
 ├── requirements.txt      # 依赖列表
