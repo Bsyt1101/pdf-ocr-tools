@@ -546,12 +546,114 @@ class PDFProcessor:
             return "阿里云 OCR"
 
 
+    def extract_system_name_from_report(self, pdf_dir: Path) -> Optional[str]:
+        """
+        从测评报告Word文件中提取系统名称
+
+        在PDF所在目录下搜索测评报告Word文件，从首页提取系统名称
+
+        Args:
+            pdf_dir: PDF文件所在目录
+
+        Returns:
+            系统名称，如"xxx运营系统"，如果未找到则返回 None
+        """
+        if not DOCX_AVAILABLE:
+            print("警告：未安装 python-docx，无法读取测评报告")
+            return None
+
+        # 搜索测评报告Word文件（在当前目录、父目录及子目录）
+        search_dirs = [pdf_dir, pdf_dir.parent]
+        report_file = None
+
+        for search_dir in search_dirs:
+            if not search_dir.exists():
+                continue
+
+            # 先在当前目录搜索
+            for item in search_dir.iterdir():
+                # 查找测评报告文件（排除渗透测试报告）
+                if item.is_file() and item.suffix in ['.docx', '.doc']:
+                    filename = item.name
+                    if ('测评报告' in filename or '报告' in filename) and '渗透' not in filename:
+                        report_file = item
+                        break
+
+                # 如果是目录，且目录名包含"测评报告"，进入子目录搜索
+                if item.is_dir() and '测评报告' in item.name:
+                    for sub_item in item.iterdir():
+                        if sub_item.is_file() and sub_item.suffix in ['.docx', '.doc']:
+                            sub_filename = sub_item.name
+                            if ('测评报告' in sub_filename or '报告' in sub_filename) and '渗透' not in sub_filename:
+                                report_file = sub_item
+                                break
+                    if report_file:
+                        break
+
+            if report_file:
+                break
+
+        if not report_file:
+            print("提示：未找到测评报告Word文件")
+            return None
+
+        print(f"找到测评报告: {report_file.name}")
+
+        try:
+            import re
+            doc = Document(report_file)
+
+            # 查找首页（前30段）
+            for para in doc.paragraphs[:30]:
+                text = para.text.strip()
+
+                # 匹配格式1：网络安全等级保护 xxx 等级测评报告（单段）
+                # 提取"网络安全等级保护"和"等级测评报告"之间的内容作为系统名称
+                pattern1 = r'网络安全等级保护\s*(.+?)\s*等级测评报告'
+                match = re.search(pattern1, text)
+                if match:
+                    system_name = match.group(1).strip()
+                    print(f"  从测评报告提取系统名称: {system_name}")
+                    return system_name
+
+                # 匹配格式2：xxx等级测评报告（单段，不包含"网络安全等级保护"）
+                pattern2 = r'^(.+?)等级测评报告$'
+                match = re.search(pattern2, text)
+                if match and '网络安全等级保护' not in text:
+                    system_name = match.group(1).strip()
+                    print(f"  从测评报告提取系统名称: {system_name}")
+                    return system_name
+
+            # 如果上面没找到，尝试查找连续的两段
+            for i in range(len(doc.paragraphs) - 1):
+                para1 = doc.paragraphs[i].text.strip()
+                para2 = doc.paragraphs[i + 1].text.strip()
+
+                # 检查是否是"网络安全等级保护" + "xxx等级测评报告"的组合
+                if '网络安全等级保护' in para1 and '等级测评报告' in para2:
+                    # 从第二段提取系统名称（去掉"等级测评报告"）
+                    pattern = r'^(.+?)等级测评报告$'
+                    match = re.search(pattern, para2)
+                    if match:
+                        system_name = match.group(1).strip()
+                        print(f"  从测评报告提取系统名称（跨段）: {system_name}")
+                        return system_name
+
+            print("  未能从测评报告提取系统名称")
+            return None
+
+        except Exception as e:
+            print(f"读取测评报告失败: {e}")
+            return None
+
     def read_system_names_from_word(self, pdf_dir: Path) -> Dict[int, str]:
         """
         从项目实施申请单Word文件中读取系统名称
 
         在PDF所在目录下搜索"项目实施单"文件夹，读取"项目实施申请单"Word文件
         提取"序号"列和"系统名称"列的对应关系
+
+        优先从测评报告中提取系统名称，然后用它更新实施单中的系统名称
 
         Args:
             pdf_dir: PDF文件所在目录
@@ -563,7 +665,12 @@ class PDFProcessor:
             print("警告：未安装 python-docx，无法读取系统名称")
             return {}
 
-        # 搜索"项目实施单"文件夹（先在当前目录，再在父目录）
+        # 1. 先从测评报告提取系统名称
+        report_system_name = self.extract_system_name_from_report(pdf_dir)
+        if report_system_name:
+            print(f"✓ 从测评报告获取系统名称: {report_system_name}")
+
+        # 2. 搜索"项目实施单"文件夹（先在当前目录，再在父目录）
         impl_folder = None
         search_dirs = [pdf_dir, pdf_dir.parent]  # 当前目录和父目录
 
@@ -578,12 +685,12 @@ class PDFProcessor:
                 break
 
         if not impl_folder:
-            print(f"警告：未找到包含'项目实施单'的文件夹（已搜索当前目录和父目录）")
+            print(f"错误：未找到包含'项目实施单'的文件夹（已搜索当前目录和父目录）")
             return {}
 
         print(f"找到项目实施单文件夹: {impl_folder.name}")
 
-        # 搜索"项目实施申请单"Word文件
+        # 3. 搜索"项目实施申请单"Word文件
         word_file = None
         for item in impl_folder.iterdir():
             if item.is_file() and "项目实施申请单" in item.name and item.suffix in ['.docx', '.doc']:
@@ -591,15 +698,16 @@ class PDFProcessor:
                 break
 
         if not word_file:
-            print(f"警告：未找到'项目实施申请单'Word文件")
+            print(f"错误：未找到'项目实施申请单'Word文件")
             return {}
 
         print(f"找到Word文件: {word_file.name}")
 
         try:
-            # 读取Word文件
+            # 4. 读取Word文件
             doc = Document(word_file)
             system_names = {}
+            doc_modified = False  # 标记文档是否被修改
 
             # 遍历所有表格
             for table in doc.tables:
@@ -639,30 +747,50 @@ class PDFProcessor:
                             if any(kw in system_text for kw in skip_keywords):
                                 continue
 
+                            # 确定序号
+                            seq_num = None
                             if seq_col_idx is not None:
                                 # 有序号列，使用序号
                                 seq_text = row.cells[seq_col_idx].text.strip()
                                 if seq_text:
                                     try:
                                         seq_num = int(seq_text)
-                                        system_names[seq_num] = system_text
-                                        print(f"  读取: 序号 {seq_num} → {system_text}")
-                                        continue
                                     except ValueError:
                                         pass
 
-                            # 无序号列或序号无效，自动编号
-                            system_names[auto_seq] = system_text
-                            print(f"  读取: 序号 {auto_seq}（自动） → {system_text}")
-                            auto_seq += 1
+                            if seq_num is None:
+                                # 无序号列或序号无效，自动编号
+                                seq_num = auto_seq
+                                auto_seq += 1
+
+                            # 如果从测评报告提取到了系统名称，用它替换实施单中的系统名称
+                            original_name = system_text
+                            if report_system_name:
+                                system_text = report_system_name
+                                if original_name != system_text:
+                                    # 更新实施单中的单元格
+                                    row.cells[system_col_idx].text = system_text
+                                    doc_modified = True
+                                    print(f"  更新: 序号 {seq_num} → {original_name} 替换为 {system_text}")
+                                else:
+                                    print(f"  读取: 序号 {seq_num} → {system_text}")
+                            else:
+                                print(f"  读取: 序号 {seq_num} → {system_text}")
+
+                            system_names[seq_num] = system_text
 
                         except (ValueError, IndexError):
                             continue
 
+            # 5. 如果文档被修改，保存更新后的实施单
+            if doc_modified:
+                doc.save(word_file)
+                print(f"✓ 已保存更新后的项目实施单")
+
             if system_names:
                 print(f"成功读取 {len(system_names)} 个系统名称")
             else:
-                print("警告：未能从Word文件中读取到系统名称")
+                print("错误：未能从Word文件中读取到系统名称")
 
             return system_names
 
