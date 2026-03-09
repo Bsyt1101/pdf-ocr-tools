@@ -136,6 +136,6 @@ if extracted_core not in expected_core and expected_core not in extracted_core:
 
 ---
 
-**实现者**: Claude Code
+**实现者**: 开发团队
 **审核者**: 待审核
 **状态**: 已完成并测试通过

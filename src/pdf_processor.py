@@ -12,6 +12,7 @@ import base64
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict
 from doc_classifier import DocumentClassifier
+from logger import Logger
 
 try:
     from docx import Document
@@ -484,7 +485,7 @@ class PDFProcessor:
         ocr_engine: str = "aliyun",
         text_threshold: int = 50,
         dpi: int = 300,
-        max_workers: int = 5
+        max_workers: int = 3
     ):
         """
         初始化处理器
@@ -498,7 +499,7 @@ class PDFProcessor:
                 - "local": PaddleOCR-VL-1.5（本地 MLX-VLM）
             text_threshold: 文本提取阈值，少于此字符数则使用 OCR
             dpi: OCR 时的图片 DPI
-            max_workers: OCR 并发数，默认 5
+            max_workers: OCR 并发数，默认 3
         """
         self.text_threshold = text_threshold
         self.dpi = dpi
@@ -1069,8 +1070,8 @@ class PDFProcessor:
             print("\n尝试从项目实施申请单读取系统名称...")
             system_names_map = self.read_system_names_from_word(pdf_dir)
 
-        # 1. 拆分 PDF
-        temp_dir = output_base_dir / "temp_split"
+        # 1. 拆分 PDF（使用 PDF 文件名作为临时目录名，避免多进程冲突）
+        temp_dir = output_base_dir / f"temp_split_{pdf_path.stem}"
         page_files = self.split_pdf(pdf_path, temp_dir)
 
         # 2. 并行提取所有页面文本
@@ -1407,14 +1408,17 @@ class PDFProcessor:
         if not base_dir.exists():
             return None
 
-        # 遍历基础目录下的所有文件夹
+        # 收集所有匹配的文件夹
+        candidates = []
         for item in base_dir.iterdir():
-            if item.is_dir():
-                # 检查文件夹名称是否包含关键词
-                if folder_keyword in item.name:
-                    return item
+            if item.is_dir() and folder_keyword in item.name:
+                candidates.append(item)
 
-        return None
+        if not candidates:
+            return None
+
+        # 选择名称最短的文件夹（最精确匹配）
+        return min(candidates, key=lambda x: len(x.name))
 
     def _archive_files(self, results: List[dict], pdf_dir: Path):
         """
@@ -1464,6 +1468,500 @@ class PDFProcessor:
             except Exception as e:
                 print(f"  ✗ 移动失败: {source.name} - {e}")
 
+    # ==================== 多项目批量归档 ====================
+
+    def process_batch_pdf(
+        self,
+        pdf_path: str,
+        projects_base_dir: str
+    ):
+        """
+        处理包含多个项目文档的 PDF，自动归档到各项目文件夹
+
+        Args:
+            pdf_path: PDF 文件路径
+            projects_base_dir: 项目根目录（包含所有 JDB 项目文件夹的目录）
+        """
+        pdf_path = Path(pdf_path)
+        projects_base_dir = Path(projects_base_dir)
+
+        if not pdf_path.exists():
+            raise FileNotFoundError(f"PDF 文件不存在: {pdf_path}")
+        if not projects_base_dir.exists():
+            raise FileNotFoundError(f"项目根目录不存在: {projects_base_dir}")
+
+        # 初始化日志
+        log_dir = pdf_path.parent / "logs"
+        log = Logger(log_dir=str(log_dir), max_display_lines=15)
+
+        try:
+            self._do_process_batch(pdf_path, projects_base_dir, log)
+        finally:
+            log.print_static(f"\n日志文件: {log.log_file_path}")
+            log.close()
+
+    def _do_process_batch(self, pdf_path: Path, projects_base_dir: Path, log: Logger):
+        """批量处理的核心逻辑"""
+
+        log.section(f"批量归档: {pdf_path.name}")
+        log.info(f"项目根目录: {projects_base_dir}")
+
+        # 1. 拆分 PDF
+        temp_dir = pdf_path.parent / f"temp_split_{pdf_path.stem}"
+        log.info(f"正在拆分 PDF（共 {self._get_pdf_page_count(pdf_path)} 页）...")
+        page_files = self.split_pdf(str(pdf_path), str(temp_dir))
+        total = len(page_files)
+        log.info(f"拆分完成: {total} 页")
+
+        # 2. 并行提取文本
+        log.section("提取文本与分类")
+        text_results = self._extract_texts_parallel_with_log(page_files, log)
+
+        # 3. 分类并提取项目编号
+        results = []
+        unrecognized = []
+
+        for tr in text_results:
+            page_num = tr['page_num']
+            text = tr['text']
+
+            # 分类文档
+            doc_type, is_system_level = self.classifier.classify(text)
+
+            # 提取文件编号
+            file_code = self.classifier.extract_file_code(text)
+
+            if not doc_type:
+                log.warn(f"第 {page_num} 页: 文档类型未识别")
+                unrecognized.append({
+                    'page': page_num,
+                    'source': tr['page_file'],
+                    'reason': '文档类型未识别',
+                    'unarchived_name': f"第{page_num}页_未识别",
+                })
+                continue
+
+            if not file_code:
+                log.warn(f"第 {page_num} 页: 未找到文件编号 ({doc_type})")
+                unrecognized.append({
+                    'page': page_num,
+                    'source': tr['page_file'],
+                    'doc_type': doc_type,
+                    'reason': '未找到文件编号',
+                    'unarchived_name': f"第{page_num}页_{doc_type}",
+                })
+                continue
+
+            project_code = file_code['project_code']
+
+            # 搜索项目文件夹
+            project_dir = self._find_project_folder(projects_base_dir, project_code)
+            if not project_dir:
+                log.warn(f"第 {page_num} 页: 未找到项目 {project_code} 的文件夹")
+                # 生成有意义的文件名，便于人工处理
+                unarchived_name = f"{project_code}-{doc_type}"
+                if is_system_level and file_code.get('system_code'):
+                    unarchived_name = f"{project_code}-{file_code['doc_type_code']}-{file_code['system_code']}"
+                unrecognized.append({
+                    'page': page_num,
+                    'source': tr['page_file'],
+                    'doc_type': doc_type,
+                    'project_code': project_code,
+                    'file_code': file_code,
+                    'reason': f'未找到项目文件夹 {project_code}',
+                    'unarchived_name': unarchived_name,
+                })
+                continue
+
+            # 确定系统名称（系统级文档）
+            system_name = ""
+            if is_system_level:
+                system_name = self._resolve_system_name_for_batch(
+                    text, file_code, project_dir, log, page_num
+                )
+
+            # 生成文件名
+            filename = self.classifier.generate_filename(
+                doc_type, text, "", system_name, is_system_level, page_num
+            )
+
+            # 获取目标文件夹关键词
+            folder_keyword = self.classifier.get_folder_name(doc_type)
+
+            log.detail(f"第 {page_num} 页: {project_code} / {doc_type} → {folder_keyword}")
+            log.progress(len(results) + len(unrecognized) + 1, total, f"第 {page_num} 页 → {project_code}")
+
+            results.append({
+                'page': page_num,
+                'source': tr['page_file'],
+                'doc_type': doc_type,
+                'is_system_level': is_system_level,
+                'system_name': system_name,
+                'file_code': file_code,
+                'filename': filename,
+                'folder_keyword': folder_keyword,
+                'project_code': project_code,
+                'project_dir': project_dir,
+            })
+
+        # 4. 显示摘要
+        self._print_batch_summary(results, unrecognized, log)
+
+        # 5. 确认归档
+        confirm = log.input("\n是否执行批量归档？(y/n): ").strip().lower()
+
+        if confirm == 'y':
+            # 5.1 合并同一文档的多页
+            log.section("合并与归档")
+            merged_results = self._merge_batch_pages(results, temp_dir, log)
+
+            # 5.2 执行归档
+            self._archive_batch_files(merged_results, unrecognized, pdf_path.parent, log)
+
+            log.print_static(f"\n批量归档完成！成功 {len(merged_results)} 份，未归档 {len(unrecognized)} 份")
+        else:
+            log.print_static(f"\n已取消归档。拆分的文件保存在: {temp_dir}")
+
+    def _get_pdf_page_count(self, pdf_path: Path) -> int:
+        """获取 PDF 页数"""
+        doc = fitz.open(pdf_path)
+        count = len(doc)
+        doc.close()
+        return count
+
+    def _extract_texts_parallel_with_log(self, page_files: list, log: Logger) -> list:
+        """带日志的并行文本提取"""
+        total = len(page_files)
+        log.info(f"开始提取文本（{min(self.max_workers, total)} 并发）...")
+
+        # 检查是否使用串行模式
+        use_serial = False
+        if self.ocr_engine == "local":
+            if hasattr(self.ocr, 'use_direct') and self.ocr.use_direct:
+                use_serial = True
+
+        if use_serial:
+            results = []
+            for i, page_file in enumerate(page_files):
+                try:
+                    result = self._extract_text_single(page_file)
+                    results.append(result)
+                except Exception as e:
+                    page_num = int(Path(page_file).stem.split('_')[1])
+                    results.append({'page_num': page_num, 'page_file': page_file, 'text': ''})
+                log.progress(i + 1, total, f"第 {results[-1]['page_num']} 页")
+            return results
+        else:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            results = [None] * total
+            completed = 0
+
+            with ThreadPoolExecutor(max_workers=min(self.max_workers, total)) as executor:
+                future_to_idx = {
+                    executor.submit(self._extract_text_single, pf): i
+                    for i, pf in enumerate(page_files)
+                }
+                for future in as_completed(future_to_idx):
+                    idx = future_to_idx[future]
+                    completed += 1
+                    try:
+                        result = future.result()
+                        results[idx] = result
+                        log.progress(completed, total, f"第 {result['page_num']} 页")
+                    except Exception as e:
+                        page_num = int(Path(page_files[idx]).stem.split('_')[1])
+                        results[idx] = {'page_num': page_num, 'page_file': page_files[idx], 'text': ''}
+                        log.progress(completed, total, f"第 {page_num} 页（异常）")
+
+            return results
+
+    def _find_project_folder(self, base_dir: Path, project_code: str) -> Optional[Path]:
+        """
+        根据项目编号查找项目文件夹
+
+        Args:
+            base_dir: 项目根目录
+            project_code: 项目编号（如 JDB25300）
+
+        Returns:
+            项目文件夹路径，未找到返回 None
+        """
+        if not base_dir.exists():
+            return None
+
+        for item in base_dir.iterdir():
+            if item.is_dir() and item.name.startswith(project_code):
+                return item
+
+        return None
+
+    def _resolve_system_name_for_batch(
+        self, text: str, file_code: dict, project_dir: Path,
+        log: Logger, page_num: int
+    ) -> str:
+        """
+        批量模式下解析系统名称
+
+        优先级：
+        1. 从实施单系统名称列表在OCR文本中匹配
+        2. 从文本内容正则提取（降级方案）
+        """
+        system_name = ""
+
+        # 从项目实施单获取系统名称映射（带缓存）
+        if not hasattr(self, '_batch_system_names_cache'):
+            self._batch_system_names_cache = {}
+
+        project_code = file_code['project_code']
+        if project_code not in self._batch_system_names_cache:
+            system_names_map = self.read_system_names_from_word(project_dir)
+            self._batch_system_names_cache[project_code] = system_names_map
+            if not system_names_map:
+                log.warn(f"项目 {project_code} 未找到实施单或读取失败，系统级文档将从OCR文本提取系统名称（可能不准确）")
+        else:
+            system_names_map = self._batch_system_names_cache[project_code]
+
+        # 方式1：用实施单的系统名称在OCR文本中匹配（不依赖OCR识别的序号）
+        if system_names_map:
+            matched_name = None
+            matched_seq = None
+            for seq, name in system_names_map.items():
+                # 完整名称匹配
+                if name in text:
+                    matched_name = name
+                    matched_seq = seq
+                    break
+                # 去掉常见后缀进行模糊匹配
+                name_core = name.replace('系统', '').replace('平台', '').replace('网络', '').strip()
+                if name_core and name_core in text:
+                    matched_name = name
+                    matched_seq = seq
+                    break
+
+            if matched_name:
+                system_name = matched_name
+                log.detail(f"  第 {page_num} 页: 系统名称={system_name} (实施单匹配，序号 {matched_seq})")
+
+                # 交叉验证：文件编号中的序号 vs 实施单匹配到的序号
+                if file_code and file_code.get('system_code'):
+                    try:
+                        code_seq = int(file_code['system_code'])
+                        if code_seq != matched_seq:
+                            log.warn(
+                                f"第 {page_num} 页: 序号不一致！"
+                                f"文件编号 {file_code.get('full_code', '')} 中的系统序号={code_seq:02d}，"
+                                f"但实施单匹配到的系统名称「{matched_name}」序号={matched_seq:02d}。"
+                                f"请人工确认文件编号或实施单是否正确"
+                            )
+                        else:
+                            log.detail(f"  第 {page_num} 页: 序号交叉验证通过 (文件编号序号={code_seq:02d}, 实施单序号={matched_seq:02d})")
+                    except (ValueError, TypeError):
+                        pass
+            else:
+                # 实施单有数据但文本中匹配不到
+                names_list = ', '.join(f"{seq}:{name}" for seq, name in system_names_map.items())
+                log.warn(f"第 {page_num} 页: OCR文本中未匹配到实施单中的任何系统名称 [{names_list}]")
+
+        # 方式2：从文本内容正则提取（降级方案，准确性较低）
+        if not system_name:
+            extracted = self.classifier.extract_system_name_from_content(text)
+            if extracted:
+                system_name = extracted
+                log.warn(f"第 {page_num} 页: 系统名称从OCR文本提取: {system_name}（未经实施单验证，请人工确认）")
+
+                # 交叉验证：正则提取的名称与实施单比对
+                if system_names_map:
+                    # 检查提取的名称是否在实施单中
+                    found_in_map = False
+                    extracted_core = extracted.replace('系统', '').replace('平台', '').replace('网络', '').strip()
+                    for seq, name in system_names_map.items():
+                        name_core = name.replace('系统', '').replace('平台', '').replace('网络', '').strip()
+                        if extracted == name or (extracted_core and extracted_core == name_core):
+                            found_in_map = True
+                            # 还可以验证序号
+                            if file_code and file_code.get('system_code'):
+                                try:
+                                    code_seq = int(file_code['system_code'])
+                                    if code_seq != seq:
+                                        log.warn(
+                                            f"第 {page_num} 页: 序号不一致！"
+                                            f"文件编号序号={code_seq:02d}，"
+                                            f"实施单中「{name}」序号={seq:02d}。"
+                                            f"请人工确认"
+                                        )
+                                except (ValueError, TypeError):
+                                    pass
+                            break
+                    if not found_in_map:
+                        names_list = ', '.join(f"{seq}:{name}" for seq, name in system_names_map.items())
+                        log.warn(
+                            f"第 {page_num} 页: 正则提取的系统名称「{extracted}」不在实施单中 [{names_list}]，请人工确认"
+                        )
+            else:
+                log.warn(f"第 {page_num} 页: 无法确定系统名称，系统级文档将使用默认命名")
+
+        return system_name
+
+    def _print_batch_summary(self, results: list, unrecognized: list, log: Logger):
+        """打印批量处理摘要"""
+        log.section("处理结果摘要")
+
+        # 按项目分组统计
+        project_stats = {}
+        for r in results:
+            pc = r['project_code']
+            if pc not in project_stats:
+                project_stats[pc] = {'dir': r['project_dir'].name, 'docs': []}
+            project_stats[pc]['docs'].append(r)
+
+        lines = []
+        lines.append(f"识别成功: {len(results)} 页，涉及 {len(project_stats)} 个项目")
+        lines.append(f"未能归档: {len(unrecognized)} 页")
+        lines.append("")
+
+        for pc, info in sorted(project_stats.items()):
+            lines.append(f"  {pc} ({info['dir']})")
+            type_counts = {}
+            for doc in info['docs']:
+                dt = doc['doc_type']
+                type_counts[dt] = type_counts.get(dt, 0) + 1
+            for dt, cnt in sorted(type_counts.items()):
+                lines.append(f"    {dt}: {cnt} 页")
+
+        if unrecognized:
+            lines.append("")
+            lines.append("  未归档的页面:")
+            for u in unrecognized:
+                name_hint = u.get('unarchived_name', '')
+                if name_hint:
+                    lines.append(f"    第 {u['page']} 页: {u['reason']} → {name_hint}.pdf")
+                else:
+                    lines.append(f"    第 {u['page']} 页: {u['reason']}")
+
+        # 打印为静态输出
+        for line in lines:
+            log.print_static(line)
+
+    def _merge_batch_pages(self, results: list, temp_dir: Path, log: Logger) -> list:
+        """
+        批量模式的页面合并
+
+        按 项目编号+文件编号 分组合并
+        """
+        groups = {}
+        for r in results:
+            merge_key = self._get_merge_key(r)
+            project_key = f"{r['project_code']}_{merge_key}"
+            if project_key not in groups:
+                groups[project_key] = []
+            groups[project_key].append(r)
+
+        merged = []
+        for key, group in groups.items():
+            if len(group) == 1:
+                merged.append(group[0])
+            else:
+                # 按页码排序
+                group.sort(key=lambda x: x['page'])
+                pages = [g['page'] for g in group]
+                log.info(f"合并多页文档: {key}（页面 {pages}）")
+
+                # 检查页面间隔是否合理（最大间隔5页）
+                max_gap = 0
+                for i in range(1, len(pages)):
+                    gap = pages[i] - pages[i - 1]
+                    max_gap = max(max_gap, gap)
+
+                if max_gap > 5:
+                    log.warn(f"  页面间隔过大（最大 {max_gap}），不合并")
+                    merged.extend(group)
+                    continue
+
+                # 合并 PDF 文件
+                merged_file = self._merge_pdf_files(group, temp_dir)
+                if merged_file:
+                    merged_result = group[0].copy()
+                    merged_result['source'] = merged_file
+                    merged_result['page'] = pages[0]
+                    merged.append(merged_result)
+                    log.info(f"  合并完成: {len(group)} 页 → 1 份")
+                else:
+                    merged.extend(group)
+
+        return merged
+
+    def _archive_batch_files(self, results: list, unrecognized: list, pdf_dir: Path, log: Logger):
+        """将文件归档到各自的项目文件夹"""
+        log.info(f"开始归档 {len(results)} 份文件...")
+
+        success_count = 0
+        fail_count = 0
+
+        for i, r in enumerate(results):
+            project_dir = r['project_dir']
+            folder_keyword = r['folder_keyword']
+
+            # 搜索目标子文件夹
+            target_folder = self._find_matching_folder(project_dir, folder_keyword) if folder_keyword else None
+
+            if not target_folder:
+                log.warn(f"项目 {r['project_code']} 未找到子文件夹 '{folder_keyword}'")
+                # 放入未归档文件夹
+                unrecognized.append({
+                    'page': r['page'],
+                    'source': r['source'],
+                    'doc_type': r.get('doc_type', ''),
+                    'project_code': r['project_code'],
+                    'reason': f"项目中未找到子文件夹 '{folder_keyword}'",
+                    'unarchived_name': f"{r['project_code']}-{r['filename']}",
+                })
+                fail_count += 1
+                continue
+
+            # 目标文件路径
+            target_file = target_folder / f"{r['filename']}.pdf"
+
+            # 处理文件名冲突
+            counter = 1
+            while target_file.exists():
+                target_file = target_folder / f"{r['filename']}_{counter}.pdf"
+                counter += 1
+
+            # 移动文件
+            source = Path(r['source'])
+            try:
+                source.rename(target_file)
+                success_count += 1
+                log.detail(f"{source.name} → {r['project_code']}/{target_folder.name}/{target_file.name}")
+                log.progress(i + 1, len(results), f"{r['project_code']}/{target_file.name}")
+            except Exception as e:
+                log.error(f"移动失败: {source.name} - {e}")
+                fail_count += 1
+
+        # 处理未归档的文件
+        if unrecognized:
+            unarchived_dir = pdf_dir / "未归档"
+            unarchived_dir.mkdir(exist_ok=True)
+            log.info(f"将 {len(unrecognized)} 份未归档文件移动到: {unarchived_dir.name}/")
+
+            for u in unrecognized:
+                source = Path(u['source'])
+                if source.exists():
+                    # 使用有意义的文件名：项目编号-文档类型.pdf
+                    unarchived_name = u.get('unarchived_name', source.stem)
+                    target = unarchived_dir / f"{unarchived_name}.pdf"
+                    counter = 1
+                    while target.exists():
+                        target = unarchived_dir / f"{unarchived_name}_{counter}.pdf"
+                        counter += 1
+                    try:
+                        source.rename(target)
+                        log.detail(f"  未归档: {source.name} → 未归档/{target.name} ({u['reason']})")
+                    except Exception as e:
+                        log.error(f"  移动未归档文件失败: {source.name} - {e}")
+
+        log.info(f"归档统计: 成功 {success_count}，失败 {fail_count}，未归档 {len(unrecognized)}")
+
 
 def main():
     """主函数 - 交互式命令行界面"""
@@ -1489,6 +1987,16 @@ OCR 引擎选项:
         '--ocr',
         choices=['local', 'aliyun', 'siliconflow'],
         help='指定 OCR 引擎'
+    )
+    parser.add_argument(
+        '--batch',
+        action='store_true',
+        help='批量模式：处理包含多个项目文档的 PDF，自动归档到各项目文件夹'
+    )
+    parser.add_argument(
+        '--projects-dir',
+        type=str,
+        help='批量模式下的项目根目录路径'
     )
 
     args = parser.parse_args()
@@ -1536,7 +2044,10 @@ OCR 引擎选项:
                 ocr_display_name = "PaddleOCR-VL-1.5（专业OCR模型）"
 
     print("=" * 60)
-    print("PDF 文档自动拆分和重命名工具")
+    if args.batch:
+        print("PDF 多项目批量归档工具")
+    else:
+        print("PDF 文档自动拆分和重命名工具")
     print(f"使用 {ocr_display_name}")
     print("=" * 60)
 
@@ -1546,20 +2057,39 @@ OCR 引擎选项:
         print("错误：未输入文件路径")
         return
 
-    # 输入项目信息
-    project_name = input("请输入项目名称（可选）: ").strip()
-    system_name = input("请输入系统名称（可选）: ").strip()
-
-    # 输出目录
-    output_dir = input("请输入输出目录（默认为当前目录）: ").strip() or "."
-
-    # 创建处理器并处理
+    # 创建处理器（本地 OCR 默认并发 1，云端默认并发 3）
+    workers = 1 if ocr_engine == "local" else 3
     try:
-        processor = PDFProcessor(ocr_engine=ocr_engine, max_workers=5)
-        processor.process_pdf(pdf_path, project_name, system_name, output_dir)
+        processor = PDFProcessor(ocr_engine=ocr_engine, max_workers=workers)
     except ValueError as e:
         print(f"\n错误: {e}")
         sys.exit(1)
+
+    if args.batch:
+        # 批量模式
+        projects_dir = args.projects_dir
+        if not projects_dir:
+            projects_dir = input("请输入项目根目录路径（包含所有 JDB 项目文件夹）: ").strip().strip("'\"")
+        if not projects_dir:
+            print("错误：未输入项目根目录路径")
+            return
+
+        try:
+            processor.process_batch_pdf(pdf_path, projects_dir)
+        except (FileNotFoundError, ValueError) as e:
+            print(f"\n错误: {e}")
+            sys.exit(1)
+    else:
+        # 单项目模式
+        project_name = input("请输入项目名称（可选）: ").strip()
+        system_name = input("请输入系统名称（可选）: ").strip()
+        output_dir = input("请输入输出目录（默认为当前目录）: ").strip() or "."
+
+        try:
+            processor.process_pdf(pdf_path, project_name, system_name, output_dir)
+        except ValueError as e:
+            print(f"\n错误: {e}")
+            sys.exit(1)
 
 
 if __name__ == "__main__":
