@@ -970,7 +970,6 @@ class PDFProcessor:
             # 4. 读取Word文件
             doc = Document(word_file)
             system_names = {}
-            doc_modified = False  # 标记文档是否被修改
 
             # 遍历所有表格
             for table in doc.tables:
@@ -1026,29 +1025,24 @@ class PDFProcessor:
                                 seq_num = auto_seq
                                 auto_seq += 1
 
-                            # 如果从测评报告提取到了系统名称，用它替换实施单中的系统名称
-                            original_name = system_text
-                            if report_system_name:
-                                system_text = report_system_name
-                                if original_name != system_text:
-                                    # 更新实施单中的单元格
-                                    row.cells[system_col_idx].text = system_text
-                                    doc_modified = True
-                                    print(f"  更新: 序号 {seq_num} → {original_name} 替换为 {system_text}")
-                                else:
-                                    print(f"  读取: 序号 {seq_num} → {system_text}")
-                            else:
-                                print(f"  读取: 序号 {seq_num} → {system_text}")
-
+                            print(f"  读取: 序号 {seq_num} → {system_text}")
                             system_names[seq_num] = system_text
 
                         except (ValueError, IndexError):
                             continue
 
-            # 5. 如果文档被修改，保存更新后的实施单
-            if doc_modified:
-                doc.save(word_file)
-                print(f"✓ 已保存更新后的项目实施单")
+            # 5. 如果从测评报告提取到了名称，与实施单比对验证
+            if report_system_name and system_names:
+                # 检查测评报告名称是否在实施单中
+                report_core = report_system_name.replace('系统', '').replace('平台', '').strip()
+                matched = False
+                for seq, name in system_names.items():
+                    name_core = name.replace('系统', '').replace('平台', '').strip()
+                    if report_core in name_core or name_core in report_core:
+                        matched = True
+                        break
+                if not matched:
+                    print(f"  ⚠️  测评报告系统名称「{report_system_name}」与实施单不匹配，请核实")
 
             if system_names:
                 print(f"成功读取 {len(system_names)} 个系统名称")
