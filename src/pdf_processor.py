@@ -1561,7 +1561,10 @@ class PDFProcessor:
                     'text_preview': text[:200]
                 })
 
-        # 3. 编号冲突告警汇总
+        # 3. 显示处理结果摘要
+        self._print_summary(results, project_name, system_name)
+
+        # 4. 编号冲突告警汇总（放在归档确认前，确保用户能看到）
         if code_conflicts:
             print("\n" + "=" * 60)
             print(f"⚠️  发现 {len(code_conflicts)} 处文件编号与页面内容不一致：")
@@ -1573,9 +1576,6 @@ class PDFProcessor:
             print("-" * 60)
             print("提示：源文档中存在编号错误，建议核实原始文件。")
             print("=" * 60)
-
-        # 4. 显示处理结果摘要
-        self._print_summary(results, project_name, system_name)
 
         # 5. 询问是否执行归档
         print("\n" + "=" * 60)
@@ -1931,6 +1931,7 @@ class PDFProcessor:
         # 3. 分类并提取项目编号
         results = []
         unrecognized = []
+        code_conflicts = []  # 收集编号冲突告警
 
         for tr in text_results:
             page_num = tr['page_num']
@@ -1988,7 +1989,7 @@ class PDFProcessor:
             system_name = ""
             if is_system_level:
                 system_name = self._resolve_system_name_for_batch(
-                    text, file_code, project_dir, log, page_num
+                    text, file_code, project_dir, log, page_num, code_conflicts
                 )
 
             # 生成文件名
@@ -2017,6 +2018,20 @@ class PDFProcessor:
 
         # 4. 显示摘要
         self._print_batch_summary(results, unrecognized, log)
+
+        # 4.1 编号冲突告警汇总（放在归档确认前，确保用户能看到）
+        if code_conflicts:
+            log.print_static("")
+            log.print_static("=" * 60)
+            log.print_static(f"⚠️  发现 {len(code_conflicts)} 处文件编号与页面内容不一致：")
+            log.print_static("-" * 60)
+            for c in code_conflicts:
+                log.print_static(f"  第 {c['page']:2d} 页 | 编号 {c['file_code']}")
+                log.print_static(f"         编号指向: {c['code_system']}")
+                log.print_static(f"         实际内容: {c['actual_system']}（已自动纠正）")
+            log.print_static("-" * 60)
+            log.print_static("提示：源文档中存在编号错误，建议核实原始文件。")
+            log.print_static("=" * 60)
 
         # 5. 确认归档
         confirm = log.input("\n是否执行批量归档？(y/n): ").strip().lower()
@@ -2108,7 +2123,7 @@ class PDFProcessor:
 
     def _resolve_system_name_for_batch(
         self, text: str, file_code: dict, project_dir: Path,
-        log: Logger, page_num: int
+        log: Logger, page_num: int, code_conflicts: list = None
     ) -> str:
         """
         批量模式下解析系统名称
@@ -2158,12 +2173,20 @@ class PDFProcessor:
                     try:
                         code_seq = int(file_code['system_code'])
                         if code_seq != matched_seq:
+                            full_code = file_code.get('full_code', f'?-?-{code_seq:02d}')
+                            code_system_name = system_names_map.get(code_seq, f'序号{code_seq}')
                             log.warn(
-                                f"第 {page_num} 页: 序号不一致！"
-                                f"文件编号 {file_code.get('full_code', '')} 中的系统序号={code_seq:02d}，"
-                                f"但实施单匹配到的系统名称「{matched_name}」序号={matched_seq:02d}。"
-                                f"请人工确认文件编号或实施单是否正确"
+                                f"第 {page_num} 页: 编号冲突！"
+                                f"文件编号 {full_code} 指向「{code_system_name}」(序号 {code_seq:02d})，"
+                                f"但页面内容实际为「{matched_name}」(序号 {matched_seq:02d})，已自动纠正"
                             )
+                            if code_conflicts is not None:
+                                code_conflicts.append({
+                                    'page': page_num,
+                                    'file_code': full_code,
+                                    'code_system': code_system_name,
+                                    'actual_system': matched_name,
+                                })
                         else:
                             log.detail(f"  第 {page_num} 页: 序号交叉验证通过 (文件编号序号={code_seq:02d}, 实施单序号={matched_seq:02d})")
                     except (ValueError, TypeError):
@@ -2194,12 +2217,20 @@ class PDFProcessor:
                                 try:
                                     code_seq = int(file_code['system_code'])
                                     if code_seq != seq:
+                                        full_code = file_code.get('full_code', f'?-?-{code_seq:02d}')
+                                        code_system_name = system_names_map.get(code_seq, f'序号{code_seq}')
                                         log.warn(
-                                            f"第 {page_num} 页: 序号不一致！"
-                                            f"文件编号序号={code_seq:02d}，"
-                                            f"实施单中「{name}」序号={seq:02d}。"
-                                            f"请人工确认"
+                                            f"第 {page_num} 页: 编号冲突！"
+                                            f"文件编号 {full_code} 指向「{code_system_name}」(序号 {code_seq:02d})，"
+                                            f"但正则提取为「{extracted}」匹配实施单序号={seq:02d}，已自动纠正"
                                         )
+                                        if code_conflicts is not None:
+                                            code_conflicts.append({
+                                                'page': page_num,
+                                                'file_code': full_code,
+                                                'code_system': code_system_name,
+                                                'actual_system': extracted,
+                                            })
                                 except (ValueError, TypeError):
                                     pass
                             break
