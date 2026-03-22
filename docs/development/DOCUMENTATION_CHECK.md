@@ -1,16 +1,16 @@
 # 文档一致性检查报告
 
 **检查日期**: 2026-03-22
-**当前版本**: v1.7.2
+**当前版本**: v1.7.5
 
 ---
 
 ## ✅ 文档完整性检查
 
 ### 核心文档
-- [x] **README.md** - 已更新到v1.7.2
-  - 添加了百度飞桨 PaddleOCR-VL-1.5 引擎说明
-  - 更新了模型选择表格和配置说明
+- [x] **README.md** - 已更新到v1.7.5
+  - 添加了百度飞桨 API 参数优化说明
+  - 添加了 Tesseract 页眉编号兜底说明
   - 版本号已更新
 
 - [x] **INDEX.md** - 已更新到v1.5.0
@@ -18,9 +18,9 @@
   - 更新了功能特性速查表
   - 版本号已更新
 
-- [x] **CHANGELOG.md** - 已更新到v1.7.2
-  - 添加了v1.7.2版本记录（百度飞桨多模型支持）
-  - 添加了v1.7.1版本记录（序号交叉验证、未归档命名）
+- [x] **CHANGELOG.md** - 已更新到v1.7.5
+  - 添加了v1.7.5版本记录（API参数优化、Tesseract兜底、关键词修复）
+  - 包含完整版本历史
 
 ### 功能文档
 - [x] **DOC_TYPES.md** - 18种文档类型完整
@@ -44,7 +44,7 @@
   - v1.4.0新功能文档
   - 合并逻辑和示例完整
 
-- [x] **OCR_ENGINES.md** - 已更新到v1.7.2
+- [x] **OCR_ENGINES.md** - 已更新到v1.7.3
   - 新增百度飞桨 PaddleOCR-VL-1.5 引擎说明
   - 新增同步/异步解析模式说明
   - 更新为四种引擎完整对比
@@ -85,10 +85,10 @@
 ### 版本号检查
 | 文档 | 版本号 | 状态 |
 |------|--------|------|
-| README.md | v1.7.2 | ✅ 最新 |
+| README.md | v1.7.4 | ✅ 最新 |
 | INDEX.md | v1.5.0 | ⚠️ 待更新 |
-| CHANGELOG.md | v1.7.2 | ✅ 最新 |
-| OCR_ENGINES.md | v1.7.2 | ✅ 最新 |
+| CHANGELOG.md | v1.7.4 | ✅ 最新 |
+| OCR_ENGINES.md | v1.7.3 | ✅ 正确 |
 | IMPROVEMENTS_SUMMARY.md | v1.5.0 | ✅ 最新 |
 | LOCAL_DEPLOYMENT_SUMMARY.md | v1.5.0 | ✅ 最新 |
 | PAGE_MERGE.md | v1.4.0 | ✅ 正确 |
@@ -120,6 +120,14 @@
 | 未归档文件有意义命名 | v1.7.1 | pdf_processor.py | ✅ 一致 |
 | 综合测试用例 | v1.7.1 | test_comprehensive.py | ✅ 一致 |
 | 百度飞桨 PaddleOCR 云服务 | v1.7.2 | OCR_ENGINES.md, CURRENT_CONFIG.md | ✅ 一致 |
+| 统一 OCR 文本标准化架构 | v1.7.3 | CLAUDE.md, OCR_ENGINES.md | ✅ 一致 |
+| 系统级文档降级修复 | v1.7.3 | doc_classifier.py | ✅ 一致 |
+| 未识别页面合并修复 | v1.7.3 | pdf_processor.py | ✅ 一致 |
+| 编号冲突自动检测与纠正 | v1.7.4 | pdf_processor.py | ✅ 一致 |
+| OCR 连字符变体统一 | v1.7.4 | pdf_processor.py | ✅ 一致 |
+| 系统级文档合并键修复 | v1.7.4 | pdf_processor.py | ✅ 一致 |
+| 同编号不同系统拆分 | v1.7.4 | pdf_processor.py | ✅ 一致 |
+| 测评结果记录签字页关键词兜底 | v1.7.4 | doc_classifier.py | ✅ 一致 |
 
 ---
 
@@ -301,14 +309,14 @@
 **所有文档已更新到最新状态，逻辑一致性良好！**
 
 ### 主要更新
-1. ✅ 版本号统一更新到v1.7.2
-2. ✅ 新增百度飞桨 PaddleOCR 云服务引擎（VL-1.5/VL/PP-OCRv5/PP-StructureV3）
-3. ✅ 默认使用 PaddleOCR-VL-1.5 端点，TOKEN 即用
-4. ✅ 新增序号交叉验证（实施单序号 vs 文件编号序号）
-5. ✅ 未归档文件以项目编号+文档类型命名
-6. ✅ 新增 69 个综合测试用例
-7. ✅ OCR_ENGINES.md 更新为四种引擎完整对比
-8. ✅ CURRENT_CONFIG.md 更新引擎列表和环境变量配置
+1. ✅ 版本号统一更新到v1.7.3
+2. ✅ 统一 OCR 文本标准化架构（`_normalize_ocr_text`），所有引擎输出一致
+3. ✅ 修复系统级文档降级导致的命名和验证失效问题
+4. ✅ 修复未识别页面被错误合并为一个 PDF 的问题
+5. ✅ 修复文件夹映射缺失（渗透测试报告、报告评审记录）导致崩溃
+6. ✅ 异步 API 结果下载增加重试机制
+7. ✅ OCR_ENGINES.md 更新同步/异步解析说明
+8. ✅ CLAUDE.md 新增 OCR 文本标准化架构说明
 
 ### 文档质量
 - 完整性: ⭐⭐⭐⭐⭐

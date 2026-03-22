@@ -347,9 +347,12 @@ class BaiduPaddleOCR:
         payload = {
             'file': file_data,
             'fileType': 1,
-            'useDocOrientationClassify': False,
-            'useDocUnwarping': False,
-            'useChartRecognition': False,
+            'useDocOrientationClassify': True,   # 自动矫正旋转（0°/90°/180°/270°）
+            'useDocUnwarping': True,              # 自动矫正褶皱/倾斜
+            'useLayoutDetection': False,          # 关闭版面检测，改用纯 OCR 模式，避免遗漏页眉小字
+            'promptLabel': 'ocr',                 # VL 模型 prompt 类型：纯文字识别
+            'useChartRecognition': False,          # 不需要图表识别
+            'visualize': False,                    # 不需要可视化结果图，减少返回时间
         }
 
         response = requests.post(self.api_url, json=payload, headers=headers, timeout=60)
@@ -372,9 +375,12 @@ class BaiduPaddleOCR:
         }
 
         optional_payload = {
-            'useDocOrientationClassify': False,
-            'useDocUnwarping': False,
-            'useChartRecognition': False,
+            'useDocOrientationClassify': True,    # 自动矫正旋转（0°/90°/180°/270°）
+            'useDocUnwarping': True,               # 自动矫正褶皱/倾斜
+            'useLayoutDetection': False,           # 关闭版面检测，改用纯 OCR 模式，避免遗漏页眉小字
+            'promptLabel': 'ocr',                  # VL 模型 prompt 类型：纯文字识别
+            'useChartRecognition': False,           # 不需要图表识别
+            'visualize': False,                     # 不需要可视化结果图，减少返回时间
         }
 
         # 提交任务（文件上传模式）
@@ -432,9 +438,23 @@ class BaiduPaddleOCR:
         """从异步任务结果 URL 获取识别文本"""
         import requests
         import json
+        import time
 
-        resp = requests.get(jsonl_url, timeout=30)
-        resp.raise_for_status()
+        # 重试机制，应对临时网络/SSL 错误
+        resp = None
+        for attempt in range(3):
+            try:
+                resp = requests.get(jsonl_url, timeout=30)
+                resp.raise_for_status()
+                break
+            except (requests.exceptions.SSLError, requests.exceptions.ConnectionError) as e:
+                if attempt < 2:
+                    time.sleep(1 * (attempt + 1))
+                    continue
+                print(f"    结果下载失败（重试 {attempt + 1} 次后）: {e}")
+                return ""
+        if resp is None:
+            return ""
 
         text_parts = []
         for line in resp.text.strip().split('\n'):
@@ -448,7 +468,7 @@ class BaiduPaddleOCR:
         return '\n'.join(text_parts)
 
     def _parse_result(self, result: dict) -> str:
-        """解析 API 返回结果，提取文本"""
+        """解析 API 返回结果，提取文本（原始格式，标准化由上层统一处理）"""
         if 'result' in result:
             res = result['result']
             # PaddleOCR-VL 返回格式：layoutParsingResults[i].markdown.text
@@ -1095,16 +1115,87 @@ class PDFProcessor:
         text = page.get_text()
 
         # 2. 如果文本太少，判断为扫描件，使用 OCR
-        if len(text.strip()) < self.text_threshold:
-            ocr_name = self._get_ocr_display_name()
+        is_scanned = len(text.strip()) < self.text_threshold
+        if is_scanned:
             print(f"    扫描件，OCR识别中...", end='', flush=True)
             text = self._ocr_page(page)
-            # 显示识别结果预览
+
+        # 统一文本标准化：去除 HTML 标签等格式差异，确保所有 OCR 引擎输出一致
+        text = self._normalize_ocr_text(text)
+
+        # 显示识别结果预览（标准化后的纯文本）
+        if is_scanned:
             preview = text[:50].replace('\n', ' ') if text else '(空)'
             print(f" ✓ 识别完成: {preview}...")
 
+        # 补充提取文件编号：OCR 引擎可能丢失页眉小字，用 PyMuPDF 内置 Tesseract 兜底
+        if is_scanned and text and not self.classifier.extract_file_code(text):
+            header_text = self._ocr_header_for_file_code(page)
+            if header_text:
+                text = header_text + '\n' + text
+                print(f"    [补充] 从页眉提取到文件编号信息")
+
         doc.close()
+
         return text.strip()
+
+    def _ocr_header_for_file_code(self, page) -> Optional[str]:
+        """
+        用 PyMuPDF 内置 Tesseract 对全页做 OCR，专门提取文件编号
+
+        云 OCR（如百度飞桨 VL 模型）经常忽略页眉小字，导致文件编号丢失。
+        此方法用本地 Tesseract 做补充识别，仅提取文件编号部分。
+
+        Args:
+            page: PyMuPDF 页面对象
+
+        Returns:
+            包含文件编号的文本，如果未找到则返回 None
+        """
+        import re
+        try:
+            tp = page.get_textpage_ocr(language='chi_sim+eng', dpi=300)
+            full_text = page.get_text(textpage=tp)
+            if not full_text:
+                return None
+            # 标准化连字符
+            full_text = re.sub(r'[—–−ー一]', '-', full_text)
+            # 检查是否包含文件编号
+            if self.classifier.extract_file_code(full_text):
+                # 只返回前20%文本（包含文件编号的页眉区域），避免干扰正文分类
+                header_len = max(200, len(full_text) // 5)
+                return full_text[:header_len].strip()
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _normalize_ocr_text(text: str) -> str:
+        """
+        统一标准化 OCR 输出文本
+
+        不同 OCR 引擎返回格式不同（纯文本、HTML、Markdown 等），
+        在此统一处理为纯文本，确保下游分类器和文件编号提取的行为一致。
+        """
+        import re
+        if not text:
+            return text
+        # 去除 HTML 标签（云服务可能返回 <div>、<table> 等）
+        text = re.sub(r'<[^>]+>', ' ', text)
+        # 去除 Markdown 图片语法 ![alt](url)
+        text = re.sub(r'!\[[^\]]*\]\([^)]*\)', '', text)
+        # 去除 LaTeX 公式（部分模型会产生无意义公式如 \( \text{EICAT} \)）
+        text = re.sub(r'\\\(.*?\\\)', '', text)
+        text = re.sub(r'\\\[.*?\\\]', '', text)
+        # 统一连字符变体为 ASCII 连字符（OCR 常把 - 识别为中文一、破折号等）
+        text = re.sub(r'[—–−ー一]', '-', text)
+        # 合并多余空格
+        text = re.sub(r' +', ' ', text)
+        # 去除空行中的多余空格
+        text = re.sub(r'\n +', '\n', text)
+        # 合并多个连续空行为一个
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        return text
 
     def _ocr_page(self, page) -> str:
         """
@@ -1305,6 +1396,7 @@ class PDFProcessor:
 
         output_base_dir = Path(output_base_dir)
         pdf_dir = pdf_path.parent
+        code_conflicts = []  # 收集编号冲突告警
 
         # 0. 读取系统名称（如果未提供）
         system_names_map = {}
@@ -1351,11 +1443,33 @@ class PDFProcessor:
                                 system_seq = int(file_code['system_code'])
                                 file_code_system_seq = system_seq  # 保存文件编号中的系统序号
                                 print(f"  系统序号: {system_seq}")
-                                print(f"  系统名称映射: {system_names_map}")
+                                print(f"  ���统名称映射: {system_names_map}")
                                 if system_seq in system_names_map:
                                     current_system_name = system_names_map[system_seq]
                                     system_name_source = 'file_code'
                                     print(f"  ✓ 使用系统名称: {current_system_name} (序号 {system_seq})")
+
+                                    # 校验：检查页面内容中是否出现其他系统名称
+                                    # 防止编号冲突（如两个系统共用 BGFS-01）导致系统名称错误
+                                    for seq, name in system_names_map.items():
+                                        if seq == system_seq:
+                                            continue
+                                        name_core = name.replace('系统', '').replace('平台', '').strip()
+                                        current_core = current_system_name.replace('系统', '').replace('平台', '').strip()
+                                        # 页面内容包含其他系统名称，且不包含当前系统名称 → 编号有误，纠正
+                                        if (name in text or name_core in text) and current_core not in text:
+                                            full_code = file_code.get('full_code', f'?-?-{system_seq:02d}')
+                                            print(f"  ⚠️  编号冲突：文件编号 {full_code} 指向「{current_system_name}」(序号 {system_seq})，")
+                                            print(f"      但页面内容实际为「{name}」(序号 {seq})，已自动纠正")
+                                            code_conflicts.append({
+                                                'page': page_num,
+                                                'file_code': full_code,
+                                                'code_system': current_system_name,
+                                                'actual_system': name,
+                                            })
+                                            current_system_name = name
+                                            file_code_system_seq = seq
+                                            break
                                 else:
                                     print(f"  ✗ 未找到序号 {system_seq} 对应的系统名称")
                             except (ValueError, KeyError) as e:
@@ -1380,6 +1494,12 @@ class PDFProcessor:
                             print(f"      - 文件编号中的系统序号: {file_code_system_seq}")
                             print(f"      - 匹配到的系统名称: {current_system_name} (序号 {matched_seq})")
                             print(f"      - 建议检查文件编号或系统名称是否正确")
+                            code_conflicts.append({
+                                'page': page_num,
+                                'file_code': f'序号 {file_code_system_seq:02d}',
+                                'code_system': system_names_map.get(file_code_system_seq, f'序号{file_code_system_seq}'),
+                                'actual_system': current_system_name,
+                            })
 
                     # 方式3：从 OCR 文本内容提取系统名称
                     if not current_system_name:
@@ -1402,6 +1522,12 @@ class PDFProcessor:
                                         print(f"      - 实施单中对应的系统名称: {expected_name}")
                                         print(f"      - 页面提取的系统名称: {current_system_name}")
                                         print(f"      - 建议检查文件编号或页面内容是否正确")
+                                        code_conflicts.append({
+                                            'page': page_num,
+                                            'file_code': f'序号 {file_code_system_seq:02d}',
+                                            'code_system': expected_name,
+                                            'actual_system': current_system_name,
+                                        })
                         else:
                             print(f"  ✗ 未能提取系统名称")
 
@@ -1441,19 +1567,32 @@ class PDFProcessor:
                     'text_preview': text[:200]
                 })
 
-        # 3. 显示处理结果摘要
+        # 3. 编号冲突告警汇总
+        if code_conflicts:
+            print("\n" + "=" * 60)
+            print(f"⚠️  发现 {len(code_conflicts)} 处文件编号与页面内容不一致：")
+            print("-" * 60)
+            for c in code_conflicts:
+                print(f"  第 {c['page']:2d} 页 | 编号 {c['file_code']}")
+                print(f"         编号指向: {c['code_system']}")
+                print(f"         实际内容: {c['actual_system']}（已自动纠正）")
+            print("-" * 60)
+            print("提示：源文档中存在编号错误，建议核实原始文件。")
+            print("=" * 60)
+
+        # 4. 显示处理结果摘要
         self._print_summary(results, project_name, system_name)
 
-        # 4. 询问是否执行归档
+        # 5. 询问是否执行归档
         print("\n" + "=" * 60)
         confirm = input("是否执行文件归档？(y/n): ").strip().lower()
 
         if confirm == 'y':
-            # 4.1 合并同一文档的多页
+            # 5.1 合并同一文档的多页
             print("\n检查是否需要合并页面...")
             merged_results = self._merge_pages(results, temp_dir)
 
-            # 4.2 使用PDF文件所在目录作为搜索基础目录
+            # 5.2 使用PDF文件所在目录作为搜索基础目录
             pdf_dir = pdf_path.parent
             self._archive_files(merged_results, pdf_dir)
             print("\n归档完成！")
@@ -1488,12 +1627,20 @@ class PDFProcessor:
             system_name = result.get('system_name', '')
             is_system_level = result.get('is_system_level', False)
 
+            if not doc_type:
+                # 未识别文档：每页独立，不合并
+                return f"unknown-page{result.get('page', 0)}"
+
             if is_system_level and system_name:
                 # 系统级文档：使用系统名称+文档类型
                 return f"{system_name}-{doc_type}"
+            elif is_system_level:
+                # 系统级文档但无法确定系统归属：每页独立，不合并
+                # 避免不同系统的同类文档被错误合并
+                return f"{doc_type}-page{result.get('page', 0)}"
             else:
                 # 项目级文档：使用文档类型
-                return doc_type or 'unknown'
+                return doc_type
 
     def _merge_pages(self, results: List[dict], temp_dir: Path) -> List[dict]:
         """
@@ -1516,7 +1663,31 @@ class PDFProcessor:
 
             groups[merge_key].append(result)
 
-        # 2. 处理每个组
+        # 2. 拆分系统级文档中编号相同但系统不同的页面
+        #    例如：BGFS-01 用于两个不同系统的报告复审记录
+        split_groups = {}
+        for merge_key, group in groups.items():
+            if len(group) > 1 and any(r.get('is_system_level') for r in group):
+                # 检查系统名称是否一致
+                system_names = set()
+                for r in group:
+                    sn = r.get('system_name', '')
+                    if sn:
+                        system_names.add(sn)
+                if len(system_names) > 1:
+                    # 不同系统的页面使用了相同编号，按系统拆分
+                    print(f"\n检测到编号 {merge_key} 下有多个系统: {system_names}")
+                    for r in group:
+                        sn = r.get('system_name', '')
+                        sub_key = f"{merge_key}_{sn}" if sn else f"{merge_key}_page{r.get('page', 0)}"
+                        if sub_key not in split_groups:
+                            split_groups[sub_key] = []
+                        split_groups[sub_key].append(r)
+                    continue
+            split_groups[merge_key] = group
+        groups = split_groups
+
+        # 3. 处理每个组
         merged_results = []
         merge_count = 0
 
@@ -1677,6 +1848,10 @@ class PDFProcessor:
 
         for r in results:
             folder_keyword = r['folder']
+
+            if folder_keyword is None:
+                print(f"  警告：'{r.get('type', '未知')}' 没有对应的文件夹映射，归入未分类")
+                folder_keyword = "未分类"
 
             # 搜索匹配的文件夹
             target_folder = self._find_matching_folder(pdf_dir, folder_keyword)

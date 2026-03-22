@@ -71,8 +71,10 @@ class DocumentClassifier:
         "漏洞扫描记录签字确认表": "漏洞扫描报告",
         "xxx系统-漏洞扫描记录签字确认表": "漏洞扫描报告",
         "渗透测试记录": "渗透测试报告",
+        "渗透测试报告": "渗透测试报告",
         "渗透测试记录签字确认表": "渗透测试报告",
         "xxx系统-渗透测试记录签字确认表": "渗透测试报告",
+        "报告评审记录": "报告评审记录",
         "报告复审记录": "报告评审记录",
         "xxx系统-报告复审记录": "报告评审记录",
         "报告初审记录": "报告评审记录",
@@ -93,7 +95,7 @@ class DocumentClassifier:
         (["启动会议"], "启动会议记录表及签到表", False),
         (["末次会议"], "末次会议记录表及签到表", False),
         ([("接收归还", "文档清单")], "现场接收归还文档清单", False),
-        (["验收评估"], "项目验收评估表", False),
+        (["项目验收"], "项目验收评估表", False),
         (["保密承诺"], "保密承诺书", False),
         ([("入场", "确认")], "入场离场确认单", False),
         ([("离场", "确认")], "入场离场确认单", False),
@@ -110,9 +112,10 @@ class DocumentClassifier:
         ([("测评方案", "复审")], "xxx系统-测评方案复审记录", True),
         ([("测评方案", "确认")], "xxx系统-测评方案确认书", True),
         ([("测评结果", "记录")], "xxx系统-测评结果记录签字页", True),
+        ([("测评层面", "测评人员")], "xxx系统-测评结果记录签字页", True),
         (["问题列表"], "xxx系统-测评问题列表签字页", True),
-        (["漏洞扫描"], "xxx系统-漏洞扫描记录签字确认表", True),
-        (["渗透测试"], "xxx系统-渗透测试记录签字确认表", True),
+        ([("漏洞扫描", "确认")], "xxx系统-漏洞扫描记录签字确认表", True),
+        ([("渗透测试", "确认")], "xxx系统-渗透测试记录签字确认表", True),
     ]
 
     # 系统级文档类型（用于判断是否需要系统编号）
@@ -291,10 +294,8 @@ class DocumentClassifier:
                 match = all(keyword in text for keyword in keywords)
 
             if match:
-                # 如果匹配到系统级文档，降级为项目级命名
-                if is_system_level and doc_type in self.SYSTEM_TO_PROJECT_LEVEL:
-                    project_level_name = self.SYSTEM_TO_PROJECT_LEVEL[doc_type]
-                    return project_level_name, False  # 返回项目级命名，is_system_level=False
+                # 直接返回原始类型名和系统级标记
+                # 系统级文档保留"xxx系统-"前缀，后续 generate_filename 会替换为实际系统名
                 return doc_type, is_system_level
 
         return None, False
