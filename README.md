@@ -80,7 +80,7 @@ pip install -r requirements.txt
 2. 如果本地 MLX-VLM 服务可用 → 使用 **本地 PaddleOCR-VL**（HTTP 服务）
 3. 如果设置了 `ALIYUN_OCR_APPCODE` → 使用 **阿里云 OCR**
 4. 如果设置了 `SILICONFLOW_API_KEY` → 使用 **SiliconFlow API**
-5. 如果设置了 `BAIDU_PADDLEOCR_TOKEN` 和 `BAIDU_PADDLEOCR_URL` → 使用 **百度飞桨 PaddleOCR**
+5. 如果设置了 `BAIDU_PADDLEOCR_TOKEN` → 使用 **百度飞桨 PaddleOCR-VL-1.5**（默认端点，`BAIDU_PADDLEOCR_URL` 可选）
 
 #### 选项1：使用本地 PaddleOCR-VL（推荐，免费）
 
@@ -183,24 +183,23 @@ processor = PDFProcessor(
 **设置环境变量**
 
 ```bash
-# Linux/Mac
+# Linux/Mac（只需设置 TOKEN，默认使用 PaddleOCR-VL-1.5）
 export BAIDU_PADDLEOCR_TOKEN="你的Token"
-export BAIDU_PADDLEOCR_URL="你的API地址"
 
-# 或添加到 ~/.bashrc 或 ~/.zshrc
+# 可选：自定义 API 地址（切换其他模型时使用）
+# export BAIDU_PADDLEOCR_URL="你的API地址"
+
+# 持久化到 ~/.zshrc
 echo 'export BAIDU_PADDLEOCR_TOKEN="你的Token"' >> ~/.zshrc
-echo 'export BAIDU_PADDLEOCR_URL="你的API地址"' >> ~/.zshrc
 source ~/.zshrc
 ```
 
 ```cmd
-# Windows CMD
+# Windows CMD（只需设置 TOKEN）
 set BAIDU_PADDLEOCR_TOKEN=你的Token
-set BAIDU_PADDLEOCR_URL=你的API地址
 
 # Windows PowerShell
 $env:BAIDU_PADDLEOCR_TOKEN="你的Token"
-$env:BAIDU_PADDLEOCR_URL="你的API地址"
 ```
 
 **详细配置说明**: 查看 [OCR_ENGINES.md](OCR_ENGINES.md)

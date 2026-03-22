@@ -281,34 +281,29 @@ class BaiduPaddleOCR:
     通过设置不同的 API_URL 选择模型，API 格式通用。
     """
 
+    # PaddleOCR-VL-1.5 默认端点（版式解析）
+    DEFAULT_API_URL = "https://paddleocr.aistudio-app.com/api/v2/ocr/layout-parsing"
+
     def __init__(self, token: str = None, api_url: str = None):
         """
         初始化百度飞桨 PaddleOCR 云服务客户端
 
         Args:
             token: AI Studio 访问令牌（可从环境变量 BAIDU_PADDLEOCR_TOKEN 读取）
-            api_url: API 地址（可从环境变量 BAIDU_PADDLEOCR_URL 读取）
+            api_url: API 地址（可从环境变量 BAIDU_PADDLEOCR_URL 读取，不设置则默认使用 PaddleOCR-VL-1.5）
 
         获取方式：
             访问 https://aistudio.baidu.com/paddleocr/task
-            在 API 调用示例中获取 API_URL 和 TOKEN
+            在 API 调用示例中获取 TOKEN（API_URL 可选，默认 VL-1.5）
         """
         self.token = token or os.getenv('BAIDU_PADDLEOCR_TOKEN')
-        self.api_url = api_url or os.getenv('BAIDU_PADDLEOCR_URL')
+        self.api_url = api_url or os.getenv('BAIDU_PADDLEOCR_URL') or self.DEFAULT_API_URL
 
         if not self.token:
             raise ValueError(
                 "请设置百度飞桨 PaddleOCR Token！\n"
                 "方法1: 设置环境变量 BAIDU_PADDLEOCR_TOKEN\n"
                 "方法2: 在初始化时传入 token 参数\n"
-                "获取方式: 访问 https://aistudio.baidu.com/paddleocr/task"
-            )
-
-        if not self.api_url:
-            raise ValueError(
-                "请设置百度飞桨 PaddleOCR API 地址！\n"
-                "方法1: 设置环境变量 BAIDU_PADDLEOCR_URL\n"
-                "方法2: 在初始化时传入 api_url 参数\n"
                 "获取方式: 访问 https://aistudio.baidu.com/paddleocr/task"
             )
 
@@ -320,7 +315,7 @@ class BaiduPaddleOCR:
         """从 API URL 路径推断模型名称"""
         url_lower = self.api_url.lower()
         if 'layout-parsing' in url_lower or 'vl' in url_lower:
-            return "PaddleOCR-VL"
+            return "PaddleOCR-VL-1.5"
         elif 'general-recognition' in url_lower or 'ocrv5' in url_lower:
             return "PP-OCRv5"
         elif 'structure' in url_lower:
@@ -2199,9 +2194,9 @@ OCR 引擎选项:
             elif os.getenv('SILICONFLOW_API_KEY'):
                 ocr_engine = "deepseek"
                 ocr_display_name = "PaddleOCR-VL-1.5（专业OCR模型）"
-            elif os.getenv('BAIDU_PADDLEOCR_TOKEN') and os.getenv('BAIDU_PADDLEOCR_URL'):
+            elif os.getenv('BAIDU_PADDLEOCR_TOKEN'):
                 ocr_engine = "baidu"
-                ocr_display_name = "百度飞桨 PaddleOCR（云服务，免费额度）"
+                ocr_display_name = "百度飞桨 PaddleOCR-VL-1.5（云服务，免费额度）"
 
     print("=" * 60)
     if args.batch:
