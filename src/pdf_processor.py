@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 PDF 文档自动拆分和重命名处理器
-支持多种 OCR 引擎：阿里云 OCR、DeepSeek-OCR
+支持多种 OCR 引擎：阿里云 OCR、DeepSeek-OCR、百度飞桨 PaddleOCR 云服务
 """
 
 import os
@@ -269,6 +269,133 @@ class DeepSeekOCR:
             return ""
 
 
+class BaiduPaddleOCR:
+    """百度飞桨 PaddleOCR 云服务 API 客户端（AI Studio 免费额度）"""
+
+    def __init__(self, token: str = None, api_url: str = None):
+        """
+        初始化百度飞桨 PaddleOCR 云服务客户端
+
+        Args:
+            token: AI Studio 访问令牌（可从环境变量 BAIDU_PADDLEOCR_TOKEN 读取）
+            api_url: API 地址（可从环境变量 BAIDU_PADDLEOCR_URL 读取）
+
+        获取方式：
+            访问 https://aistudio.baidu.com/paddleocr/task
+            在 API 调用示例中获取 API_URL 和 TOKEN
+        """
+        self.token = token or os.getenv('BAIDU_PADDLEOCR_TOKEN')
+        self.api_url = api_url or os.getenv('BAIDU_PADDLEOCR_URL')
+
+        if not self.token:
+            raise ValueError(
+                "请设置百度飞桨 PaddleOCR Token！\n"
+                "方法1: 设置环境变量 BAIDU_PADDLEOCR_TOKEN\n"
+                "方法2: 在初始化时传入 token 参数\n"
+                "获取方式: 访问 https://aistudio.baidu.com/paddleocr/task"
+            )
+
+        if not self.api_url:
+            raise ValueError(
+                "请设置百度飞桨 PaddleOCR API 地址！\n"
+                "方法1: 设置环境变量 BAIDU_PADDLEOCR_URL\n"
+                "方法2: 在初始化时传入 api_url 参数\n"
+                "获取方式: 访问 https://aistudio.baidu.com/paddleocr/task"
+            )
+
+        print("百度飞桨 PaddleOCR 云服务初始化成功")
+
+    def get_display_name(self) -> str:
+        """获取 OCR 引擎的显示名称"""
+        return "百度飞桨 PaddleOCR（云服务）"
+
+    def recognize_general(self, image_path: str) -> str:
+        """
+        通用文字识别
+
+        Args:
+            image_path: 图片文件路径
+
+        Returns:
+            识别的文本内容
+        """
+        try:
+            import requests
+            import json
+
+            # 读取图片并转为 base64
+            with open(image_path, 'rb') as f:
+                file_bytes = f.read()
+                file_data = base64.b64encode(file_bytes).decode('ascii')
+
+            headers = {
+                'Authorization': f'token {self.token}',
+                'Content-Type': 'application/json'
+            }
+
+            payload = {
+                'file': file_data,
+                'fileType': 1,  # 图片
+                'useDocOrientationClassify': False,
+                'useDocUnwarping': False,
+                'useChartRecognition': False,
+            }
+
+            response = requests.post(
+                self.api_url,
+                json=payload,
+                headers=headers,
+                timeout=60
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                if 'result' in result:
+                    res = result['result']
+                    # PaddleOCR-VL 返回格式：layoutParsingResults[i].markdown.text
+                    if 'layoutParsingResults' in res:
+                        text_parts = []
+                        for page_res in res['layoutParsingResults']:
+                            md = page_res.get('markdown', {})
+                            text = md.get('text', '')
+                            if text:
+                                text_parts.append(text)
+                        return '\n'.join(text_parts)
+                    # PP-OCRv5 返回格式：ocrResults[i].recText
+                    elif 'ocrResults' in res:
+                        text_parts = []
+                        for ocr_item in res['ocrResults']:
+                            if 'recText' in ocr_item:
+                                text_parts.append(ocr_item['recText'])
+                            elif 'prunedResult' in ocr_item:
+                                pruned = ocr_item['prunedResult']
+                                if 'rec_texts' in pruned:
+                                    text_parts.extend(pruned['rec_texts'])
+                        return '\n'.join(text_parts)
+                    else:
+                        # 尝试直接取 result 的文本
+                        print(f"    未知返回格式，可用字段: {list(res.keys())}")
+                        return str(res)
+                elif 'errorCode' in result:
+                    print(f"    API 错误: {result.get('errorCode')} - {result.get('errorMsg', '')}")
+                    return ""
+                else:
+                    print(f"    OCR 返回格式异常: {str(result)[:200]}")
+                    return ""
+            else:
+                print(f"    API 调用失败: HTTP {response.status_code}")
+                print(f"    错误信息: {response.text[:200]}")
+                return ""
+
+        except ImportError:
+            print("错误：requests 库未安装")
+            print("请运行: pip install requests")
+            return ""
+        except Exception as e:
+            print(f"    百度飞桨 PaddleOCR 识别失败: {e}")
+            return ""
+
+
 class LocalPaddleOCR:
     """本地 PaddleOCR-VL 客户端（直接加载模型或通过 MLX-VLM 服务）"""
 
@@ -511,8 +638,8 @@ class PDFProcessor:
         self.max_workers = max_workers
 
         # 验证 OCR 引擎选择
-        if self.ocr_engine not in ["aliyun", "deepseek", "local"]:
-            raise ValueError(f"不支持的 OCR 引擎: {ocr_engine}，可选值: aliyun, deepseek, local")
+        if self.ocr_engine not in ["aliyun", "deepseek", "local", "baidu"]:
+            raise ValueError(f"不支持的 OCR 引擎: {ocr_engine}，可选值: aliyun, deepseek, local, baidu")
 
     def _init_ocr(self):
         """延迟初始化 OCR（避免不需要时加载）"""
@@ -523,6 +650,9 @@ class PDFProcessor:
             elif self.ocr_engine == "deepseek":
                 print("正在初始化 DeepSeek-OCR...")
                 self.ocr = DeepSeekOCR(self.api_key)
+            elif self.ocr_engine == "baidu":
+                print("正在初始化百度飞桨 PaddleOCR 云服务...")
+                self.ocr = BaiduPaddleOCR()
             elif self.ocr_engine == "local":
                 print("正在初始化本地 PaddleOCR-VL...")
                 self.ocr = LocalPaddleOCR()
@@ -541,6 +671,8 @@ class PDFProcessor:
         # 如果未初始化，返回默认名称
         if self.ocr_engine == "deepseek":
             return "PaddleOCR-VL-1.5"
+        elif self.ocr_engine == "baidu":
+            return "百度飞桨 PaddleOCR（云服务）"
         elif self.ocr_engine == "local":
             return "PaddleOCR-VL-1.5（本地）"
         else:
@@ -1973,19 +2105,21 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 OCR 引擎选项:
-  local     - 本地 PaddleOCR-VL（免费，隐私保护）
-  aliyun    - 阿里云 OCR（快速稳定，付费）
+  local       - 本地 PaddleOCR-VL（免费，隐私保护）
+  aliyun      - 阿里云 OCR（快速稳定，付费）
   siliconflow - SiliconFlow API（免费额度）
+  baidu       - 百度飞桨 PaddleOCR 云服务（免费额度）
 
 示例:
   python main.py --ocr local
   python main.py --ocr aliyun
   python main.py --ocr siliconflow
+  python main.py --ocr baidu
         """
     )
     parser.add_argument(
         '--ocr',
-        choices=['local', 'aliyun', 'siliconflow'],
+        choices=['local', 'aliyun', 'siliconflow', 'baidu'],
         help='指定 OCR 引擎'
     )
     parser.add_argument(
@@ -2011,7 +2145,8 @@ OCR 引擎选项:
         engine_names = {
             'local': 'PaddleOCR-VL-1.5（本地）',
             'aliyun': '阿里云 OCR（快速稳定）',
-            'siliconflow': 'PaddleOCR-VL-1.5（SiliconFlow API）'
+            'siliconflow': 'PaddleOCR-VL-1.5（SiliconFlow API）',
+            'baidu': '百度飞桨 PaddleOCR（云服务，免费额度）'
         }
         ocr_display_name = engine_names.get(args.ocr, ocr_display_name)
     else:
@@ -2042,6 +2177,9 @@ OCR 引擎选项:
             elif os.getenv('SILICONFLOW_API_KEY'):
                 ocr_engine = "deepseek"
                 ocr_display_name = "PaddleOCR-VL-1.5（专业OCR模型）"
+            elif os.getenv('BAIDU_PADDLEOCR_TOKEN') and os.getenv('BAIDU_PADDLEOCR_URL'):
+                ocr_engine = "baidu"
+                ocr_display_name = "百度飞桨 PaddleOCR（云服务，免费额度）"
 
     print("=" * 60)
     if args.batch:
@@ -2057,8 +2195,13 @@ OCR 引擎选项:
         print("错误：未输入文件路径")
         return
 
-    # 创建处理器（本地 OCR 默认并发 1，云端默认并发 3）
-    workers = 1 if ocr_engine == "local" else 3
+    # 创建处理器（本地 OCR 默认并发 1，云端默认并发 3，百度飞桨默认并发 2 避免限流）
+    if ocr_engine == "local":
+        workers = 1
+    elif ocr_engine == "baidu":
+        workers = 2
+    else:
+        workers = 3
     try:
         processor = PDFProcessor(ocr_engine=ocr_engine, max_workers=workers)
     except ValueError as e:

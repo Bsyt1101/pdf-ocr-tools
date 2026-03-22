@@ -1,7 +1,7 @@
 # PDF 文档自动拆分和归档工具
 
-**版本**: v1.7.1
-**更新日期**: 2026-03-10
+**版本**: v1.7.2
+**更新日期**: 2026-03-22
 
 ## 📖 项目简介
 
@@ -13,7 +13,7 @@
 - 📁 **自动归档** - 搜索并移动文件到对应的文件夹
 - 📋 **系统名称自动读取** - 从项目实施申请单Word文件自动读取系统名称
 - 🔗 **智能页面合并** - 自动合并同一文档的多页（v1.4.0）
-- 🎯 **多OCR引擎支持** - 支持本地PaddleOCR、阿里云OCR、SiliconFlow API（v1.5.0+）
+- 🎯 **多OCR引擎支持** - 支持本地PaddleOCR、阿里云OCR、SiliconFlow API、百度飞桨云服务（v1.5.0+）
 - 🔧 **文件编号OCR修正** - 自动修正常见OCR错误（JD8/JD9 → JDB）（v1.5.0）
 - 📂 **未分类文件夹自动创建** - 自动创建"未分类"文件夹存储未识别文档（v1.5.0）
 - ⚡ **OCR并行识别** - 多线程并行OCR，默认5并发，速度提升3-5倍（v1.5.1）
@@ -29,7 +29,7 @@
 
 ### 技术特点
 
-- ✅ 支持多种OCR引擎：本地PaddleOCR-VL（推荐）、阿里云OCR、SiliconFlow API
+- ✅ 支持多种OCR引擎：本地PaddleOCR-VL（推荐）、阿里云OCR、SiliconFlow API、百度飞桨云服务
 - ✅ 本地OCR：完全免费，隐私保护，Apple Silicon优化（MLX框架）
 - ✅ OCR引擎自动选择：根据环境变量自动选择最佳引擎
 - ✅ OCR并行识别：默认3并发（云端API），默认1并发（本地OCR），串行处理（本地直接加载）
@@ -61,13 +61,16 @@ pip install -r requirements.txt
 
 ### 2. 配置 OCR 引擎
 
-本工具支持三种 OCR 引擎，可根据需求选择：
+本工具支持四种 OCR 引擎，可根据需求选择：
 
 | 引擎 | 速度 | 精度 | 成本 | 隐私 | 推荐度 |
 |------|------|------|------|------|--------|
 | **本地 PaddleOCR-VL** | 中（2-3秒/页） | 极高 | 免费 | 完全本地 | ⭐⭐⭐⭐⭐ |
+| **百度飞桨 PaddleOCR** | 快（1-3秒/页） | 极高 | 免费额度 | 上传云端 | ⭐⭐⭐⭐⭐ |
 | **阿里云 OCR** | 快（1-2秒/页） | 极高 | 低 | 上传云端 | ⭐⭐⭐⭐ |
 | **SiliconFlow API** | 快（2-4秒/页） | 高 | 免费额度 | 上传云端 | ⭐⭐⭐⭐ |
+
+> 注：识别速度受设备性能、网络状况、PDF 页面复杂度等因素影响，以上数据仅供参考。
 
 #### OCR 引擎自动选择
 
@@ -77,6 +80,7 @@ pip install -r requirements.txt
 2. 如果本地 MLX-VLM 服务可用 → 使用 **本地 PaddleOCR-VL**（HTTP 服务）
 3. 如果设置了 `ALIYUN_OCR_APPCODE` → 使用 **阿里云 OCR**
 4. 如果设置了 `SILICONFLOW_API_KEY` → 使用 **SiliconFlow API**
+5. 如果设置了 `BAIDU_PADDLEOCR_TOKEN` 和 `BAIDU_PADDLEOCR_URL` → 使用 **百度飞桨 PaddleOCR**
 
 #### 选项1：使用本地 PaddleOCR-VL（推荐，免费）
 
@@ -160,6 +164,34 @@ processor = PDFProcessor(
 )
 ```
 
+#### 选项3：使用百度飞桨 PaddleOCR 云服务（推荐，免费额度）
+
+1. 访问 [PaddleOCR 官网](https://aistudio.baidu.com/paddleocr/task) 注册并登录
+2. 在 API 调用示例中获取 `API_URL` 和 `TOKEN`
+
+**设置环境变量**
+
+```bash
+# Linux/Mac
+export BAIDU_PADDLEOCR_TOKEN="你的Token"
+export BAIDU_PADDLEOCR_URL="你的API地址"
+
+# 或添加到 ~/.bashrc 或 ~/.zshrc
+echo 'export BAIDU_PADDLEOCR_TOKEN="你的Token"' >> ~/.zshrc
+echo 'export BAIDU_PADDLEOCR_URL="你的API地址"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+```cmd
+# Windows CMD
+set BAIDU_PADDLEOCR_TOKEN=你的Token
+set BAIDU_PADDLEOCR_URL=你的API地址
+
+# Windows PowerShell
+$env:BAIDU_PADDLEOCR_TOKEN="你的Token"
+$env:BAIDU_PADDLEOCR_URL="你的API地址"
+```
+
 **详细配置说明**: 查看 [OCR_ENGINES.md](OCR_ENGINES.md)
 
 ### 3. 运行程序
@@ -172,6 +204,7 @@ python main.py
 python main.py --ocr local       # 本地 PaddleOCR-VL
 python main.py --ocr aliyun      # 阿里云 OCR
 python main.py --ocr siliconflow # SiliconFlow API
+python main.py --ocr baidu       # 百度飞桨 PaddleOCR 云服务
 
 # 批量模式：处理包含多个项目文档的 PDF
 python main.py --batch
@@ -435,14 +468,14 @@ CLASSIFICATION_RULES = [
 
 > 注：识别速度受设备性能、网络状况、PDF 页面复杂度等因素影响，以下数据仅供参考。
 
-| 特性 | 本地 PaddleOCR-VL | 阿里云OCR | SiliconFlow API |
-|------|-------------------|-----------|-----------------|
-| 识别速度 | 2-3秒/页 | 1-2秒/页 | 2-4秒/页 |
-| 依赖大小 | 大（需下载模型约1.8GB） | 小（仅requests） | 小（仅requests） |
-| 准确率 | 极高 | 极高 | 高 |
-| 成本 | 免费 | 按调用次数收费 | 有免费额度 |
-| 隐私 | 完全本地 | 上传云端 | 上传云端 |
-| 网络要求 | 首次需下载模型 | 每次需联网 | 每次需联网 |
+| 特性 | 本地 PaddleOCR-VL | 百度飞桨 PaddleOCR | 阿里云OCR | SiliconFlow API |
+|------|-------------------|-------------------|-----------|-----------------|
+| 识别速度 | 2-3秒/页 | 1-3秒/页 | 1-2秒/页 | 2-4秒/页 |
+| 依赖大小 | 大（需下载模型约1.8GB） | 小（仅requests） | 小（仅requests） | 小（仅requests） |
+| 准确率 | 极高 | 极高 | 极高 | 高 |
+| 成本 | 免费 | 免费额度 | 按调用次数收费 | 有免费额度 |
+| 隐私 | 完全本地 | 上传云端 | 上传云端 | 上传云端 |
+| 网络要求 | 首次需下载模型 | 每次需联网 | 每次需联网 | 每次需联网 |
 
 ## ❓ 常见问题
 
@@ -504,6 +537,10 @@ pdf-ocr-tools/
 ```
 
 ## 🔄 更新日志
+
+### v1.7.2 (2026-03-22)
+
+- ✨ 新增百度飞桨 PaddleOCR 云服务引擎（免费额度，`--ocr baidu`）
 
 ### v1.7.1 (2026-03-10)
 

@@ -1,5 +1,14 @@
 # 更新日志
 
+## [1.7.2] - 2026-03-22
+
+### 新增
+- ✨ **百度飞桨 PaddleOCR 云服务** - 新增第四种 OCR 引擎
+  - 支持百度 AI Studio 免费 API 额度
+  - 支持 PaddleOCR-VL 和 PP-OCRv5 两种返回格式
+  - 通过 `--ocr baidu` 命令行参数或环境变量 `BAIDU_PADDLEOCR_TOKEN` + `BAIDU_PADDLEOCR_URL` 配置
+  - 默认并发数 2，避免限流
+
 ## [1.7.1] - 2026-03-10
 
 ### 新增
