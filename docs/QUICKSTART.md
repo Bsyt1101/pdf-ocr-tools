@@ -9,16 +9,25 @@ cd pdf-ocr-tool
 pip install -r requirements.txt
 ```
 
-### 第二步：配置AppCode（30秒）
+### 第二步：配置 OCR 引擎（30秒）
+
+任选其一：
 
 ```bash
-export ALIYUN_OCR_APPCODE="your_aliyun_appcode_here"
+# 方式1：百度飞桨 PaddleOCR-VL-1.5（推荐，免费额度）
+export BAIDU_PADDLEOCR_TOKEN="你的Token"
+
+# 方式2：阿里云 OCR
+export ALIYUN_OCR_APPCODE="你的AppCode"
 ```
+
+> Token 获取：访问 https://aistudio.baidu.com/paddleocr/task
 
 ### 第三步：运行程序（30秒）
 
 ```bash
-python main.py
+python main.py               # 自动检测引擎
+python main.py --ocr baidu   # 或指定百度飞桨
 ```
 
 ### 第四步：输入信息（1分钟）
@@ -48,11 +57,15 @@ python main.py
 
 ## 常见问题速查
 
-### Q: 提示"请设置阿里云市场 AppCode"？
+### Q: 提示"请设置 OCR 引擎"？
 
-A: 运行以下命令：
+A: 设置任一引擎的环境变量：
 ```bash
-export ALIYUN_OCR_APPCODE="your_aliyun_appcode_here"
+# 百度飞桨（推荐）
+export BAIDU_PADDLEOCR_TOKEN="你的Token"
+
+# 或阿里云 OCR
+export ALIYUN_OCR_APPCODE="你的AppCode"
 ```
 
 ### Q: 提示"requests 库未安装"？

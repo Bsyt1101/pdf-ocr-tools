@@ -100,10 +100,11 @@ ImportError: cannot import name 'SlidingWindowCache' from 'transformers.cache_ut
 **OCR引擎自动选择逻辑**：
 
 **优先级**：
-1. 如果设置 `ALIYUN_OCR_APPCODE` → 阿里云 OCR（推荐）
-2. 如果设置 `SILICONFLOW_API_KEY` → PaddleOCR-VL-1.5
-3. 如果设置 `ANTHROPIC_API_KEY` → Claude Sonnet 4.6
-4. 如果都没设置 → 阿里云 OCR（需要配置 `ALIYUN_OCR_APPCODE`）
+1. 如果设置 `LOCAL_PADDLEOCR_DIRECT=true` → 本地 PaddleOCR-VL
+2. 如果本地 MLX-VLM 服务可用 → 本地 PaddleOCR-VL
+3. 如果设置 `ALIYUN_OCR_APPCODE` → 阿里云 OCR
+4. 如果设置 `SILICONFLOW_API_KEY` → SiliconFlow API（PaddleOCR-VL-1.5）
+5. 如果设置 `BAIDU_PADDLEOCR_TOKEN` → 百度飞桨 PaddleOCR-VL-1.5（默认端点）
 
 **模型参数**：
 - DPI: 300（高质量）
