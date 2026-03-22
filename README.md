@@ -178,16 +178,17 @@ processor = PDFProcessor(
 | PP-OCRv5 | 轻量级，速度快 | 简单文字识别 |
 | PP-StructureV3 | 结构化解析 | 表格、公式提取 |
 
-> 不同模型对应不同的 API_URL，TOKEN 通用。程序会自动识别模型类型。
+> 只需设置 TOKEN 即可使用（默认通过异步公共 API 调用 VL-1.5）。
+> 如果有专属同步 API URL，可设置 `BAIDU_PADDLEOCR_URL` 获得更快响应。
 
 **设置环境变量**
 
 ```bash
-# Linux/Mac（只需设置 TOKEN，默认使用 PaddleOCR-VL-1.5）
+# Linux/Mac（只需设置 TOKEN，默认使用 PaddleOCR-VL-1.5 异步 API）
 export BAIDU_PADDLEOCR_TOKEN="你的Token"
 
-# 可选：自定义 API 地址（切换其他模型时使用）
-# export BAIDU_PADDLEOCR_URL="你的API地址"
+# 可选：设置专属同步 API 地址（从 PaddleOCR 官网 API 示例中获取，响应更快）
+# export BAIDU_PADDLEOCR_URL="https://xxx.aistudio-app.com/layout-parsing"
 
 # 持久化到 ~/.zshrc
 echo 'export BAIDU_PADDLEOCR_TOKEN="你的Token"' >> ~/.zshrc

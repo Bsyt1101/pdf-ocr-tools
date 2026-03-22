@@ -281,8 +281,9 @@ class BaiduPaddleOCR:
     通过设置不同的 API_URL 选择模型，API 格式通用。
     """
 
-    # PaddleOCR-VL-1.5 默认端点（版式解析）
-    DEFAULT_API_URL = "https://paddleocr.aistudio-app.com/api/v2/ocr/layout-parsing"
+    # 异步 API 公共端点（无需用户专属 URL）
+    ASYNC_JOB_URL = "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs"
+    DEFAULT_MODEL = "PaddleOCR-VL-1.5"
 
     def __init__(self, token: str = None, api_url: str = None):
         """
@@ -290,14 +291,16 @@ class BaiduPaddleOCR:
 
         Args:
             token: AI Studio 访问令牌（可从环境变量 BAIDU_PADDLEOCR_TOKEN 读取）
-            api_url: API 地址（可从环境变量 BAIDU_PADDLEOCR_URL 读取，不设置则默认使用 PaddleOCR-VL-1.5）
+            api_url: 同步 API 地址（可选，每个用户独立的 URL）
+                     不设置则自动使用异步 API 公共端点
 
         获取方式：
             访问 https://aistudio.baidu.com/paddleocr/task
-            在 API 调用示例中获取 TOKEN（API_URL 可选，默认 VL-1.5）
+            在 API 调用示例中获取 TOKEN（API_URL 可选）
         """
         self.token = token or os.getenv('BAIDU_PADDLEOCR_TOKEN')
-        self.api_url = api_url or os.getenv('BAIDU_PADDLEOCR_URL') or self.DEFAULT_API_URL
+        self.api_url = api_url or os.getenv('BAIDU_PADDLEOCR_URL')
+        self.use_async = not self.api_url  # 没有自定义 URL 时使用异步 API
 
         if not self.token:
             raise ValueError(
@@ -309,10 +312,13 @@ class BaiduPaddleOCR:
 
         # 从 API URL 识别模型类型
         self.model_name = self._detect_model_name()
-        print(f"百度飞桨 {self.model_name} 云服务初始化成功")
+        mode = "异步公共API" if self.use_async else "同步专属API"
+        print(f"百度飞桨 {self.model_name} 云服务初始化成功（{mode}）")
 
     def _detect_model_name(self) -> str:
         """从 API URL 路径推断模型名称"""
+        if self.use_async:
+            return self.DEFAULT_MODEL
         url_lower = self.api_url.lower()
         if 'layout-parsing' in url_lower or 'vl' in url_lower:
             return "PaddleOCR-VL-1.5"
@@ -326,6 +332,155 @@ class BaiduPaddleOCR:
         """获取 OCR 引擎的显示名称"""
         return f"百度飞桨 {self.model_name}（云服务）"
 
+    def _recognize_sync(self, image_path: str) -> str:
+        """同步 API 调用（需要用户专属 URL）"""
+        import requests
+
+        with open(image_path, 'rb') as f:
+            file_data = base64.b64encode(f.read()).decode('ascii')
+
+        headers = {
+            'Authorization': f'token {self.token}',
+            'Content-Type': 'application/json'
+        }
+
+        payload = {
+            'file': file_data,
+            'fileType': 1,
+            'useDocOrientationClassify': False,
+            'useDocUnwarping': False,
+            'useChartRecognition': False,
+        }
+
+        response = requests.post(self.api_url, json=payload, headers=headers, timeout=60)
+
+        if response.status_code == 200:
+            return self._parse_result(response.json())
+        else:
+            print(f"    API 调用失败: HTTP {response.status_code}")
+            print(f"    错误信息: {response.text[:200]}")
+            return ""
+
+    def _recognize_async(self, image_path: str) -> str:
+        """异步 API 调用（公共端点，无需专属 URL）"""
+        import requests
+        import json
+        import time
+
+        headers = {
+            'Authorization': f'bearer {self.token}',
+        }
+
+        optional_payload = {
+            'useDocOrientationClassify': False,
+            'useDocUnwarping': False,
+            'useChartRecognition': False,
+        }
+
+        # 提交任务（文件上传模式）
+        data = {
+            'model': self.DEFAULT_MODEL,
+            'optionalPayload': json.dumps(optional_payload),
+        }
+
+        with open(image_path, 'rb') as f:
+            files = {'file': f}
+            response = requests.post(
+                self.ASYNC_JOB_URL,
+                headers=headers,
+                data=data,
+                files=files,
+                timeout=60
+            )
+
+        if response.status_code != 200:
+            print(f"    异步任务提交失败: HTTP {response.status_code}")
+            print(f"    错误信息: {response.text[:200]}")
+            return ""
+
+        job_id = response.json().get('data', {}).get('jobId')
+        if not job_id:
+            print(f"    异步���务提交失败: 未获取到 jobId")
+            return ""
+
+        # 轮询等待结果（单页图片通常很快）
+        for _ in range(30):  # 最多等待 60 秒
+            time.sleep(2)
+            result_resp = requests.get(
+                f"{self.ASYNC_JOB_URL}/{job_id}",
+                headers=headers,
+                timeout=30
+            )
+            if result_resp.status_code != 200:
+                continue
+
+            state = result_resp.json().get('data', {}).get('state')
+            if state == 'done':
+                jsonl_url = result_resp.json()['data'].get('resultUrl', {}).get('jsonUrl')
+                if jsonl_url:
+                    return self._fetch_async_result(jsonl_url)
+                return ""
+            elif state == 'failed':
+                error_msg = result_resp.json().get('data', {}).get('errorMsg', '��知错误')
+                print(f"    异步任务失败: {error_msg}")
+                return ""
+
+        print(f"    异步任务超时")
+        return ""
+
+    def _fetch_async_result(self, jsonl_url: str) -> str:
+        """从异步任务结果 URL 获取识别文本"""
+        import requests
+        import json
+
+        resp = requests.get(jsonl_url, timeout=30)
+        resp.raise_for_status()
+
+        text_parts = []
+        for line in resp.text.strip().split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            result = json.loads(line)
+            parsed = self._parse_result(result)
+            if parsed:
+                text_parts.append(parsed)
+        return '\n'.join(text_parts)
+
+    def _parse_result(self, result: dict) -> str:
+        """解析 API 返回结果，提取文本"""
+        if 'result' in result:
+            res = result['result']
+            # PaddleOCR-VL 返回格式：layoutParsingResults[i].markdown.text
+            if 'layoutParsingResults' in res:
+                text_parts = []
+                for page_res in res['layoutParsingResults']:
+                    md = page_res.get('markdown', {})
+                    text = md.get('text', '')
+                    if text:
+                        text_parts.append(text)
+                return '\n'.join(text_parts)
+            # PP-OCRv5 返回格式：ocrResults[i].recText
+            elif 'ocrResults' in res:
+                text_parts = []
+                for ocr_item in res['ocrResults']:
+                    if 'recText' in ocr_item:
+                        text_parts.append(ocr_item['recText'])
+                    elif 'prunedResult' in ocr_item:
+                        pruned = ocr_item['prunedResult']
+                        if 'rec_texts' in pruned:
+                            text_parts.extend(pruned['rec_texts'])
+                return '\n'.join(text_parts)
+            else:
+                print(f"    未知返回格式，可用字段: {list(res.keys())}")
+                return str(res)
+        elif 'errorCode' in result:
+            print(f"    API 错误: {result.get('errorCode')} - {result.get('errorMsg', '')}")
+            return ""
+        else:
+            print(f"    OCR 返回格式异常: {str(result)[:200]}")
+            return ""
+
     def recognize_general(self, image_path: str) -> str:
         """
         通用文字识别
@@ -337,72 +492,10 @@ class BaiduPaddleOCR:
             识别的文本内容
         """
         try:
-            import requests
-            import json
-
-            # 读取图片并转为 base64
-            with open(image_path, 'rb') as f:
-                file_bytes = f.read()
-                file_data = base64.b64encode(file_bytes).decode('ascii')
-
-            headers = {
-                'Authorization': f'token {self.token}',
-                'Content-Type': 'application/json'
-            }
-
-            payload = {
-                'file': file_data,
-                'fileType': 1,  # 图片
-                'useDocOrientationClassify': False,
-                'useDocUnwarping': False,
-                'useChartRecognition': False,
-            }
-
-            response = requests.post(
-                self.api_url,
-                json=payload,
-                headers=headers,
-                timeout=60
-            )
-
-            if response.status_code == 200:
-                result = response.json()
-                if 'result' in result:
-                    res = result['result']
-                    # PaddleOCR-VL 返回格式：layoutParsingResults[i].markdown.text
-                    if 'layoutParsingResults' in res:
-                        text_parts = []
-                        for page_res in res['layoutParsingResults']:
-                            md = page_res.get('markdown', {})
-                            text = md.get('text', '')
-                            if text:
-                                text_parts.append(text)
-                        return '\n'.join(text_parts)
-                    # PP-OCRv5 返回格式：ocrResults[i].recText
-                    elif 'ocrResults' in res:
-                        text_parts = []
-                        for ocr_item in res['ocrResults']:
-                            if 'recText' in ocr_item:
-                                text_parts.append(ocr_item['recText'])
-                            elif 'prunedResult' in ocr_item:
-                                pruned = ocr_item['prunedResult']
-                                if 'rec_texts' in pruned:
-                                    text_parts.extend(pruned['rec_texts'])
-                        return '\n'.join(text_parts)
-                    else:
-                        # 尝试直接取 result 的文本
-                        print(f"    未知返回格式，可用字段: {list(res.keys())}")
-                        return str(res)
-                elif 'errorCode' in result:
-                    print(f"    API 错误: {result.get('errorCode')} - {result.get('errorMsg', '')}")
-                    return ""
-                else:
-                    print(f"    OCR 返回格式异常: {str(result)[:200]}")
-                    return ""
+            if self.use_async:
+                return self._recognize_async(image_path)
             else:
-                print(f"    API 调用失败: HTTP {response.status_code}")
-                print(f"    错误信息: {response.text[:200]}")
-                return ""
+                return self._recognize_sync(image_path)
 
         except ImportError:
             print("错误：requests 库未安装")
