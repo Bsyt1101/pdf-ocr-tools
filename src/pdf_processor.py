@@ -270,7 +270,16 @@ class DeepSeekOCR:
 
 
 class BaiduPaddleOCR:
-    """百度飞桨 PaddleOCR 云服务 API 客户端（AI Studio 免费额度）"""
+    """百度飞桨 PaddleOCR 云服务 API 客户端（AI Studio 免费额度）
+
+    支持的模型：
+        - PaddleOCR-VL-1.5（推荐）：94.5% 精度，支持异形框、印章识别
+        - PaddleOCR-VL：版式解析 + OCR
+        - PP-OCRv5：轻量级文字识别
+        - PP-StructureV3：结构化解析
+
+    通过设置不同的 API_URL 选择模型，API 格式通用。
+    """
 
     def __init__(self, token: str = None, api_url: str = None):
         """
@@ -303,11 +312,24 @@ class BaiduPaddleOCR:
                 "获取方式: 访问 https://aistudio.baidu.com/paddleocr/task"
             )
 
-        print("百度飞桨 PaddleOCR 云服务初始化成功")
+        # 从 API URL 识别模型类型
+        self.model_name = self._detect_model_name()
+        print(f"百度飞桨 {self.model_name} 云服务初始化成功")
+
+    def _detect_model_name(self) -> str:
+        """从 API URL 路径推断模型名称"""
+        url_lower = self.api_url.lower()
+        if 'layout-parsing' in url_lower or 'vl' in url_lower:
+            return "PaddleOCR-VL"
+        elif 'general-recognition' in url_lower or 'ocrv5' in url_lower:
+            return "PP-OCRv5"
+        elif 'structure' in url_lower:
+            return "PP-StructureV3"
+        return "PaddleOCR"
 
     def get_display_name(self) -> str:
         """获取 OCR 引擎的显示名称"""
-        return "百度飞桨 PaddleOCR（云服务）"
+        return f"百度飞桨 {self.model_name}（云服务）"
 
     def recognize_general(self, image_path: str) -> str:
         """
